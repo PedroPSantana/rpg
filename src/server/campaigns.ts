@@ -3,7 +3,8 @@ import { generateNovelAdventure } from "@/modules/adventures/generator";
 import { AdventureBlueprintSchema, FingerprintSchema, type AdventureBlueprint } from "@/modules/adventures/schema";
 import { PlayerActionSchema, type PlayerAction } from "@/modules/campaign/actions";
 import { resolveAction, type ActionOutcome } from "@/modules/campaign/engine";
-import { CampaignStateSchema, initialCampaignState, type CampaignState } from "@/modules/campaign/state";
+import { CampaignStateSchema, conditionContextOf, initialCampaignState, type CampaignState } from "@/modules/campaign/state";
+import { evaluate } from "@/modules/adventures/conditions";
 import type { GmContextInput } from "@/modules/gm/context";
 import type { GmOrchestrator } from "@/modules/gm/orchestrator";
 import { getEdition, getSystem } from "@/modules/rules/registry";
@@ -16,7 +17,6 @@ import {
   OpCharacterBuildSchema,
   OpCharacterStateSchema,
   validateBuild,
-  type OpCharacterBuild,
   type OpSheet,
 } from "@/modules/rules/systems/ordem-paranormal/character";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
@@ -180,6 +180,7 @@ export function toClientView(view: CampaignView) {
       items: bp.items.map((i) => ({ id: i.id, name: i.name, description: i.description })),
     },
     actions: view.actions.map((a) => ({ ...a, result: stripGmNotes(a.result) })),
+    decisionAvailable: st.mode === "exploration" && !(bp.decision.id in st.decisions) && evaluate(bp.decision.availableWhen, conditionContextOf(st)),
   };
 }
 
@@ -343,9 +344,10 @@ export async function narrateAction(db: PrismaClient, gm: GmOrchestrator, player
   if (log.status !== "RESOLVED") return log.narration;
   try {
     const view = await getCampaignView(db, playerId, campaignId);
-    const stored = log.result as { facts: string[]; suggestions: string[]; rolls: ActionOutcome["rolls"] };
+    const stored = log.result as { facts: string[]; suggestions: string[]; rolls: ActionOutcome["rolls"]; events: ActionOutcome["events"] };
     const input = log.input as { text: string | null; action: PlayerAction };
-    const n = await gm.narrate({ input: gmInput(view), outcome: stored, playerText: input.text ?? describeAction(input.action) });
+    const routine = input.action.type === "move" && !input.text && !stored.events?.length && !stored.rolls?.length;
+    const n = await gm.narrate({ input: gmInput(view), outcome: stored, playerText: input.text ?? describeAction(input.action), routine });
     const dialogue = n.npcDialogue.map((d) => `${view.blueprint.npcs.find((x) => x.id === d.npcId)?.name ?? d.npcId}: "${d.line}"`).join("\n");
     const text = dialogue ? `${n.narration}\n\n${dialogue}` : n.narration;
     await db.$transaction(async (tx) => {
@@ -379,3 +381,4 @@ export function describeAction(a: PlayerAction): string {
   if (a.type === "talk" && a.message) return a.message;
   return ACTION_TEXT[a.type];
 }
+export type ClientView = ReturnType<typeof toClientView>;

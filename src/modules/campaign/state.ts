@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ConditionContext } from "@/modules/adventures/conditions";
 import type { AdventureBlueprint } from "@/modules/adventures/schema";
 import { initialMapState } from "@/modules/world/events";
 import { MapStateSchema } from "@/modules/world/schema";
@@ -66,5 +67,17 @@ export function initialCampaignState(bp: AdventureBlueprint): CampaignState {
     rewardsGranted: false,
     scene: 1,
     actionCount: 0,
+  };
+}
+
+export function conditionContextOf(state: CampaignState): ConditionContext {
+  return {
+    flags: state.flags,
+    clues: state.clues,
+    decisions: state.decisions,
+    encountersResolved: state.encountersResolved,
+    urgency: state.urgency,
+    visitedMaps: Object.values(state.maps).filter((m) => m.visited).map((m) => m.mapId),
+    npcsTalked: Object.entries(state.npcs).filter(([, n]) => n.talked).map(([id]) => id),
   };
 }

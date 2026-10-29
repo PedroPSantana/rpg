@@ -22,6 +22,8 @@ export function isPresent(def: MapDefinition, state: MapState, objectId: string)
 export interface PathOptions {
   /** Treat closed (unlocked, revealed) interior doors as passable — they get opened on the way. */
   passClosedDoors?: boolean;
+  /** Tiles the route must not cross (the destination itself is always allowed). */
+  avoid?: (p: Position) => boolean;
 }
 
 export function isBlocked(def: MapDefinition, state: MapState, p: Position, opts: PathOptions = {}): boolean {
@@ -74,6 +76,7 @@ export function findPath(def: MapDefinition, state: MapState, from: Position, to
       const n = { x: cur.x + dx, y: cur.y + dy };
       const k = key(n);
       if (prev.has(k) || !isWalkable(def, state, n, opts)) continue;
+      if (opts.avoid && k !== goal && opts.avoid(n)) continue;
       prev.set(k, key(cur));
       queue.push(n);
     }
@@ -89,35 +92,43 @@ export function isAdjacent(a: Position, b: Position) {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 1;
 }
 
-/** Nearest walkable tile adjacent to an object, reachable from `from`. */
+/**
+ * Shortest route to a tile adjacent to an object, reachable from `from`.
+ * The route never steps on the object's own tile (so approaching a door stays
+ * on the near side) and, when possible, avoids `opts.avoid` tiles.
+ */
 export function approachTile(def: MapDefinition, state: MapState, from: Position, target: Position, opts: PathOptions = {}): Position[] | null {
   if (isAdjacent(from, target)) return [from];
-  let best: Position[] | null = null;
-  for (let dx = -1; dx <= 1; dx++)
-    for (let dy = -1; dy <= 1; dy++) {
-      if (!dx && !dy) continue;
-      const p = { x: target.x + dx, y: target.y + dy };
-      const path = findPath(def, state, from, p, opts);
-      if (path && (!best || path.length < best.length)) best = path;
-    }
-  return best;
+  const onTarget = (p: Position) => p.x === target.x && p.y === target.y;
+  const search = (avoid?: (p: Position) => boolean) => {
+    let best: Position[] | null = null;
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++) {
+        if (!dx && !dy) continue;
+        const p = { x: target.x + dx, y: target.y + dy };
+        if (avoid?.(p)) continue;
+        const path = findPath(def, state, from, p, { ...opts, avoid: (q) => onTarget(q) || !!avoid?.(q) });
+        if (path && (!best || path.length < best.length)) best = path;
+      }
+    return best;
+  };
+  return (opts.avoid && search(opts.avoid)) || search();
 }
 
 /**
  * The map as the player may know it: unrevealed hidden objects are removed, their
- * tiles rendered as wall, and hidden areas keep only their geometry until revealed.
+ * tiles rendered as wall, and unrevealed hidden areas are walled over.
  */
 export function playerView(def: MapDefinition, state: MapState): MapDefinition {
   const concealed = def.objects.filter((o) => !isPresent(def, state, o.id));
+  const hiddenAreas = def.areas.filter((a) => a.hidden && !state.revealedAreas.includes(a.id));
   const tiles = def.tiles.map((row, y) =>
-    concealed.some((o) => o.position.y === y)
-      ? [...row].map((ch, x) => (concealed.some((o) => o.position.x === x && o.position.y === y) && ch === "D" ? "#" : ch)).join("")
-      : row,
+    [...row].map((ch, x) => ((ch === "D" && concealed.some((o) => o.position.x === x && o.position.y === y)) || inHiddenArea(def, state, { x, y }) ? "#" : ch)).join(""),
   );
   return {
     ...def,
     tiles,
     objects: def.objects.filter((o) => isPresent(def, state, o.id)),
-    areas: def.areas.map((a) => (a.hidden && !state.revealedAreas.includes(a.id) ? { ...a, name: "???" } : a)),
+    areas: def.areas.filter((a) => !hiddenAreas.includes(a)),
   };
 }

@@ -1,26 +1,92 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-ink: #0b0a0d;
+  --color-night: #121016;
+  --color-panel: #18151d;
+  --color-raised: #211d27;
+  --color-line: #2e2935;
+  --color-bone: #ece6da;
+  --color-ash: #a39d94;
+  --color-dim: #6f6a72;
+  --color-blood: #b3261e;
+  --color-ember: #e0603a;
+  --color-gold: #d6a55a;
+  --color-ok: #6fae7c;
+  --color-sanity: #7b8fe0;
+  --color-effort: #d6a55a;
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgb(179 38 30 / 0.12), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgb(123 143 224 / 0.06), transparent 60%),
+    var(--color-ink);
+  color: var(--color-bone);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: rgb(179 38 30 / 0.5);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.grain::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+@keyframes fx-flicker {
+  0%, 100% { opacity: 0; }
+  10% { opacity: 0.55; }
+  14% { opacity: 0.1; }
+  30% { opacity: 0.7; }
+  34% { opacity: 0; }
+  60% { opacity: 0.4; }
+  64% { opacity: 0; }
+}
+
+.fx-flicker {
+  background: #000;
+  opacity: 0;
+  animation: fx-flicker 1.8s steps(1, end) 1;
+}
+
+@keyframes fx-heartbeat {
+  0%, 100% { box-shadow: inset 0 0 0 0 rgb(179 38 30 / 0); }
+  50% { box-shadow: inset 0 0 140px 30px rgb(179 38 30 / 0.4); }
+}
+
+.fx-heartbeat {
+  animation: fx-heartbeat 0.9s ease-in-out 3;
+}
+
+@keyframes fx-caption {
+  0% { opacity: 0; }
+  20%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.fx-caption {
+  opacity: 0;
+  animation: fx-caption 4s ease-in-out 1;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
 }

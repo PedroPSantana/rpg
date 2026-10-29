@@ -109,6 +109,11 @@ export class GmOrchestrator {
 
   /** Never throws: narration failures degrade to deterministic narration of the same facts. */
   async narrate(req: NarrateRequest): Promise<Narration & { provider: string; degraded: boolean }> {
+    if (req.routine) {
+      // Plain movement: deterministic narration keeps clicks fast and free.
+      const n = await this.fallback.narrate(req);
+      return { ...n, provider: this.fallback.id, degraded: false };
+    }
     const attempts = (this.opts.retries ?? 1) + 1;
     const npcIds = new Set(req.input.blueprint.npcs.map((n) => n.id));
     for (let i = 0; i < attempts; i++) {

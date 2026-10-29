@@ -38,7 +38,7 @@ const VERB_PATTERNS: [Interpretation["verb"], string[]][] = [
 
 const KIND_WORDS: Record<string, string[]> = {
   door: ["porta", "passagem", "alcapao"],
-  exit: ["porta", "entrada", "saida", "portao", "rua"],
+  exit: ["porta", "entrada", "saida", "portao", "rua", "predio", "casa", "casarao", "escola", "dentro", "local", "lugar"],
   container: ["gaveta", "caixa", "armario"],
   npc: [],
   threat: ["criatura", "coisa", "monstro", "ameaca", "vulto"],
@@ -74,7 +74,7 @@ export function interpretOffline(input: GmContextInput, playerText: string): Int
   if (has(text, "regra", "como funciona", "o que acontece se")) return { ...EMPTY, intent: "narrative", rulesQuery: playerText };
 
   if (state.mode === "combat") {
-    if (has(text, "fug", "corr", "escap", "recu")) return { ...EMPTY, intent: "flee", skillId: has(text, "acrobac", "pul", "rol") ? "acrobacia" : "atletismo" };
+    if (has(text, "fug", "fuj", "corr", "escap", "recu")) return { ...EMPTY, intent: "flee", skillId: has(text, "acrobac", "pul", "rol") ? "acrobacia" : "atletismo" };
     if (has(text, "cur", "socorr", "atadur", "curativ")) return { ...EMPTY, intent: "first_aid" };
     const owned = sheet.attacks.filter((a) => a.weaponId === "desarmado" || character.inventory.some((i) => i.itemId === a.weaponId));
     const named = owned.find((a) => text.includes(normalize(a.name)));
@@ -102,12 +102,13 @@ export function interpretOffline(input: GmContextInput, playerText: string): Int
   const socialVerb = has(text, "fal", "convers", "pergunt", "convenc", "persuad", "intimid", "amea", "pression", "ment", "engan", "blef", "intu", "desconfi", "sinceri", "pec", "ped");
   if (namedNpc || (socialVerb && npcHere.length)) {
     const npc = namedNpc ?? [...npcHere].sort((a, b) => dist(present.find((o) => o.id === a.objectId)!) - dist(present.find((o) => o.id === b.objectId)!))[0];
+    // Reading someone ("se está mentindo") is checked before lying ("minto").
     const approach: Interpretation["approach"] = has(text, "intimid", "amea", "pression")
       ? "intimidar"
-      : has(text, "ment", "engan", "blef", "fing")
-        ? "enganar"
-        : has(text, "intu", "desconfi", "sinceri", "esta mentindo", "ler as inten")
-          ? "intuir"
+      : has(text, "intu", "desconfi", "sinceri", "esta mentindo", "se mente", "ler as inten", "observo se", "percebo se")
+        ? "intuir"
+        : has(text, "ment", "engan", "blef", "fing")
+          ? "enganar"
           : has(text, "convenc", "persuad", "ped", "implor", "acalm")
             ? "persuadir"
             : "conversar";
@@ -156,9 +157,9 @@ export function narrateOffline(req: NarrateRequest): Narration {
   const facts = outcome?.facts ?? [];
   const dialogue: Narration["npcDialogue"] = [];
   for (const npc of input.blueprint.npcs) {
-    const deflect = facts.find((f) => f.startsWith(`${npc.name} não coopera`));
-    if (deflect) dialogue.push({ npcId: npc.id, line: npc.deflection });
-    else if (facts.some((f) => f.startsWith("Pista descoberta") && f.includes(npc.name)) || facts.some((f) => f.includes(`${npc.name} entrega`))) {
+    // Deflections are already quoted in the engine's facts.
+    if (facts.some((f) => f.startsWith(`${npc.name} não coopera`))) continue;
+    if (facts.some((f) => f.startsWith("Pista descoberta") && f.includes(npc.name)) || facts.some((f) => f.includes(`${npc.name} entrega`))) {
       dialogue.push({ npcId: npc.id, line: "Tá bem... vou contar o que eu sei. Mas não diga que fui eu." });
     }
   }

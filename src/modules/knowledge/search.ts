@@ -14,6 +14,9 @@ export interface RuleSearchHit {
   citation: string;
 }
 
+/** Minimum share of the query's (IDF-weighted) terms a rule must match. */
+export const MIN_COVERAGE = 0.25;
+
 export function citation(rule: RuleRecord, sourceTitle: (id: string) => string): string {
   return `${sourceTitle(rule.sourceId)} — ${rule.sourceLocator} [${rule.id}]`;
 }
@@ -42,17 +45,24 @@ export function searchRules(rules: RuleRecord[], query: string, filters: RuleSea
   const df = new Map<string, number>();
   for (const d of docs) for (const t of new Set([...d.title, ...d.body])) df.set(t, (df.get(t) ?? 0) + 1);
   const n = docs.length || 1;
+  const idf = (t: string) => Math.log(1 + n / (df.get(t) ?? 0.5));
+  const queryWeight = q.reduce((sum, t) => sum + idf(t), 0);
   const hits = docs
     .map((d) => {
       let score = 0;
+      let matched = 0;
       for (const t of q) {
-        const idf = Math.log(1 + n / (df.get(t) ?? 0.5));
         const tf = d.body.filter((x) => x === t).length + 3 * d.title.filter((x) => x === t).length;
-        score += tf ? (1 + Math.log(tf)) * idf : 0;
+        if (!tf) continue;
+        score += (1 + Math.log(tf)) * idf(t);
+        matched += idf(t);
       }
-      return { rule: d.rule, score, citation: citation(d.rule, sourceTitle) };
+      return { rule: d.rule, score, coverage: matched / queryWeight, citation: citation(d.rule, sourceTitle) };
     })
-    .filter((h) => h.score > 0)
+    // A hit must explain a meaningful share of the question; otherwise the
+    // catalog has no answer and callers must say so instead of guessing.
+    .filter((h) => h.score > 0 && h.coverage >= MIN_COVERAGE)
+    .map((h) => ({ rule: h.rule, score: h.score, citation: h.citation }))
     .sort((a, b) => b.score - a.score || a.rule.id.localeCompare(b.rule.id));
   return hits.slice(0, limit);
 }

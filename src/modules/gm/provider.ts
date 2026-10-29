@@ -7,6 +7,8 @@ export interface NarrateRequest {
   /** Authoritative outcome (null for scene openings). */
   outcome: Pick<ActionOutcome, "facts" | "suggestions" | "rolls"> | null;
   playerText?: string;
+  /** Routine movement: narrated deterministically, never sent to the AI provider. */
+  routine?: boolean;
 }
 
 /**

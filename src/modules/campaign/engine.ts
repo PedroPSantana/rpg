@@ -10,7 +10,7 @@ import { approachTile, doorsOnPath, findPath, isPresent } from "@/modules/world/
 import type { MapEvent, Position } from "@/modules/world/schema";
 import type { PlayerAction } from "./actions";
 import { combatAction, startEncounter } from "./encounter";
-import type { CampaignState } from "./state";
+import { conditionContextOf, type CampaignState } from "./state";
 
 export interface EngineContext {
   blueprint: AdventureBlueprint;
@@ -47,6 +47,10 @@ export interface ActionOutcome {
 }
 
 export type ActionResult = ActionOutcome | { ok: false; reason: string; ruleId?: string };
+
+function inRect(r: { x: number; y: number; w: number; h: number }, p: Position) {
+  return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+}
 
 export class ActionRejected extends Error {
   constructor(
@@ -174,15 +178,7 @@ export class Resolution {
   }
 
   conditionContext(): ConditionContext {
-    return {
-      flags: this.state.flags,
-      clues: this.state.clues,
-      decisions: this.state.decisions,
-      encountersResolved: this.state.encountersResolved,
-      urgency: this.state.urgency,
-      visitedMaps: Object.values(this.state.maps).filter((m) => m.visited).map((m) => m.mapId),
-      npcsTalked: Object.entries(this.state.npcs).filter(([, n]) => n.talked).map(([id]) => id),
-    };
+    return conditionContextOf(this.state);
   }
 
   /** Moves along a validated path, firing area triggers on the way. Returns false if interrupted by an encounter. */
@@ -223,7 +219,13 @@ export class Resolution {
     const def = this.defs[mapId];
     const obj = def.objects.find((o) => o.id === objectId);
     if (!obj || !isPresent(def, this.state.maps[mapId], objectId)) throw new ActionRejected("Você não vê esse objeto aqui.", "world.map-event");
-    const path = approachTile(def, this.state.maps[mapId], this.state.maps[mapId].player, obj.position, { passClosedDoors: true });
+    // Walking up to something should not wander through an unresolved encounter's area on the way.
+    const danger = this.bp.encounters
+      .filter((e) => e.mapId === mapId && !(e.id in this.state.encountersResolved))
+      .flatMap((e) => def.areas.filter((a) => a.id === e.triggerArea))
+      .filter((a) => !inRect(a.rect, obj.position));
+    const avoid = danger.length ? (p: Position) => danger.some((a) => inRect(a.rect, p)) : undefined;
+    const path = approachTile(def, this.state.maps[mapId], this.state.maps[mapId].player, obj.position, { passClosedDoors: true, avoid });
     if (!path) throw new ActionRejected(`Não há caminho livre até ${obj.name}.`, "world.navigation");
     return { obj, uninterrupted: this.walk(path) };
   }

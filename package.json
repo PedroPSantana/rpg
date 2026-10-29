@@ -6,7 +6,19 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:report": "mkdir -p reports && vitest run --reporter=default --reporter=json --outputFile.json=reports/vitest.json",
+    "evals": "tsx evals/run.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:test:prepare": "tsx scripts/db-test-prepare.ts",
+    "db:seed": "tsx prisma/seed.ts",
+    "postinstall": "prisma generate",
+    "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
@@ -38,5 +50,6 @@
     "typescript": "^5",
     "vitest": "^5.0.5"
   },
-  "packageManager": "pnpm@10.28.0"
+  "packageManager": "pnpm@10.28.0",
+  "type": "module"
 }

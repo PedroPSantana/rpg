@@ -89,3 +89,11 @@ describe("coverage report", () => {
     expect(coverageSummary(cov).confirmed).toBe(0);
   });
 });
+
+describe("retrieval coverage threshold", () => {
+  it("returns nothing for questions the catalog cannot answer", () => {
+    expect(findRules("regras de veículos e perseguição de carro")).toEqual([]);
+    expect(findRules("como conjurar um ritual de terceiro círculo")).toEqual([]);
+    expect(findRules("o que acontece quando chego a zero pontos de vida", {}, 3).map((h) => h.rule.id)).toContain("op-core.conditions.morrendo");
+  });
+});

@@ -9,7 +9,13 @@ export function normalize(text: string): string {
     .trim();
 }
 
-const STOPWORDS = new Set("a o as os de da do das dos e em no na nos nas um uma uns umas para por com sem que se ao aos ou eu meu minha voce como qual quais quando onde ser ter tem mais menos".split(" "));
+const STOPWORDS = new Set(
+  (
+    "a o as os de da do das dos e em no na nos nas num numa um uma uns umas para pra por com sem que se ao aos ou eu meu minha voce como qual quais quando onde ser ter tem mais menos " +
+    // Question filler that says nothing about which rule is meant.
+    "regra regras funciona funcionam quanto quantos quantas posso pode podem acontece sao isso esse essa este esta"
+  ).split(" "),
+);
 
 export function tokenize(text: string): string[] {
   return normalize(text)

@@ -80,7 +80,7 @@ describe("investigation", () => {
 
   it("trained-only discovery methods are skipped for untrained characters", () => {
     // Combatente/Policial has no Ocultismo/Religião; the ritual clue falls back to Investigação DT 20.
-    let ctx = enterInterior(makeContext());
+    const ctx = enterInterior(makeContext());
     const ritual = ctx.blueprint.clues.find((c) => c.id === "pista-ritual")!;
     const reachable = resolveAction(ctx, { type: "interact", objectId: ritual.objectId, verb: "inspect", skillId: "ocultismo", powers: [] });
     expect(reachable.ok).toBe(false);
@@ -164,6 +164,21 @@ function toLair(ctx: EngineContext): EngineContext {
   const lair = intDef(ctx).areas.find((a) => a.id === "covil")!;
   return step(ctx, { type: "move", to: { x: lair.rect.x + 1, y: lair.rect.y + lair.rect.h - 1 } }).ctx;
 }
+
+describe("approach routing", () => {
+  it("walking up to a door never crosses an unresolved encounter area", () => {
+    const ctx = enterInterior(makeContext());
+    const lair = intDef(ctx).areas.find((a) => a.id === ctx.blueprint.encounters[0].triggerArea)!;
+    for (const door of intDef(ctx).objects.filter((o) => o.kind === "door" && !o.hidden)) {
+      const out = resolveAction(ctx, { type: "interact", objectId: door.id, verb: "inspect", powers: [] });
+      if (!out.ok) continue;
+      expect(out.state.mode, door.id).toBe("exploration");
+      const p = out.state.maps[intDef(ctx).id].player;
+      const inLair = p.x >= lair.rect.x && p.x < lair.rect.x + lair.rect.w && p.y >= lair.rect.y && p.y < lair.rect.y + lair.rect.h;
+      expect(inLair, door.id).toBe(false);
+    }
+  });
+});
 
 describe("encounter turn and combat", () => {
   it("entering the lair starts combat with disturbing presence and initiative", () => {
