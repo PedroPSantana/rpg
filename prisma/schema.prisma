@@ -1,0 +1,186 @@
+// Persistence model for the RPG platform.
+//
+// Authoritative game facts live in validated structured columns/JSON documents
+// whose shape is owned by TypeScript Zod schemas (see src/modules/**/schema.ts).
+// Append-only tables (actions, rolls, narrative) give a durable audit trail.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Player {
+  id          String     @id @default(cuid())
+  displayName String     @default("Agente")
+  createdAt   DateTime   @default(now())
+  campaigns   Campaign[]
+}
+
+enum CampaignStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  ownerId     String
+  owner       Player         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  systemId    String
+  editionId   String
+  seed        String
+  status      CampaignStatus @default(ACTIVE)
+  /// Original adventure blueprint (Zod: AdventureBlueprint). Immutable after creation.
+  blueprint   Json
+  /// Lightweight metadata used for novelty checks between campaigns.
+  fingerprint Json
+  /// Authoritative world/quest/encounter state (Zod: CampaignState).
+  state       Json
+  /// Optimistic concurrency counter, incremented on every committed action.
+  version     Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  character Character?
+  actions   ActionLog[]
+  rolls     RollLog[]
+  narrative NarrativeEntry[]
+  memories  CampaignMemory[]
+
+  @@index([ownerId, status])
+}
+
+model Character {
+  id         String   @id @default(cuid())
+  campaignId String   @unique
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  systemId   String
+  editionId  String
+  name       String
+  /// Player choices made during creation (system-specific Zod schema).
+  build      Json
+  /// Derived statistics computed by the rules engine from `build`.
+  sheet      Json
+  /// Mutable runtime state: current resources, conditions, inventory.
+  state      Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+enum ActionStatus {
+  RESOLVED
+  NARRATED
+  REJECTED
+}
+
+model ActionLog {
+  id             String       @id @default(cuid())
+  campaignId     String
+  campaign       Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  idempotencyKey String
+  sequence       Int
+  kind           String
+  input          Json
+  /// Resolved mechanical outcome, events applied and rejection reasons.
+  result         Json
+  status         ActionStatus
+  narration      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  rolls          RollLog[]
+
+  @@unique([campaignId, idempotencyKey])
+  @@unique([campaignId, sequence])
+}
+
+model RollLog {
+  id         String     @id @default(cuid())
+  campaignId String
+  campaign   Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  actionId   String?
+  action     ActionLog? @relation(fields: [actionId], references: [id], onDelete: SetNull)
+  label      String
+  /// Full roll breakdown (Zod: RollRecord).
+  detail     Json
+  total      Int
+  createdAt  DateTime   @default(now())
+
+  @@index([campaignId, createdAt])
+}
+
+enum NarrativeRole {
+  GM
+  PLAYER
+  SYSTEM
+}
+
+model NarrativeEntry {
+  id         String        @id @default(cuid())
+  campaignId String
+  campaign   Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  actionId   String?
+  role       NarrativeRole
+  content    String
+  meta       Json?
+  createdAt  DateTime      @default(now())
+
+  @@index([campaignId, createdAt])
+}
+
+model CampaignMemory {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  /// SUMMARY | FACT | MYSTERY | NPC_NOTE — informative only, never authoritative.
+  kind       String
+  content    String
+  importance Int      @default(1)
+  createdAt  DateTime @default(now())
+
+  @@index([campaignId, kind])
+}
+
+model RuleSource {
+  id           String       @id
+  systemId     String
+  editionId    String
+  title        String
+  publisher    String
+  version      String
+  kind         String
+  /// accessible | requires_owner_document | unavailable
+  accessStatus String
+  authorized   Boolean
+  notes        String
+  verifiedAt   DateTime?
+  rules        RuleRecord[]
+}
+
+model RuleRecord {
+  /// Stable identifier, e.g. "op-core.test.basic".
+  id                   String     @id
+  systemId             String
+  editionId            String
+  category             String
+  title                String
+  summary              String
+  preconditions        Json
+  procedure            Json
+  exceptions           Json
+  dependencies         String[]
+  sourceId             String
+  source               RuleSource @relation(fields: [sourceId], references: [id])
+  sourceLocator        String
+  verificationStatus   String
+  implementationStatus String
+  testRefs             String[]
+  limitations          String
+  updatedAt            DateTime   @updatedAt
+
+  @@index([systemId, editionId, category])
+}
