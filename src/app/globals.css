@@ -90,3 +90,59 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--color-line) transparent;
 }
+
+/* ---------- 2.5D scene ---------- */
+.sc-enter { animation: sc-enter 0.6s ease-out both; }
+@keyframes sc-enter {
+  from { opacity: 0; transform: scale(1.035); filter: brightness(0.3); }
+  to { opacity: 1; transform: scale(1); filter: none; }
+}
+.sc-obj { cursor: pointer; transition: filter 0.2s ease; outline: none; }
+.sc-obj:hover, .sc-obj:focus-visible { filter: brightness(1.35) drop-shadow(0 0 6px rgb(214 165 90 / 0.55)); }
+.sc-selected { filter: brightness(1.4) drop-shadow(0 0 8px rgb(214 165 90 / 0.8)); }
+.sc-flame { animation: sc-flame 0.18s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: 50% 100%; }
+@keyframes sc-flame { from { transform: scale(1, 1); } to { transform: scale(0.85, 1.12); } }
+.sc-lurk { animation: sc-lurk 5s ease-in-out infinite; }
+@keyframes sc-lurk { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.9; } }
+.sc-blink { animation: sc-blink 6s steps(1, end) infinite; }
+@keyframes sc-blink { 0%, 92% { opacity: 0.55; } 93%, 96% { opacity: 0; } }
+.sc-threat { animation: sc-breathe 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+@keyframes sc-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.03, 0.98); } }
+.sc-glitch { animation: sc-glitch 0.9s steps(2, end) infinite; }
+@keyframes sc-glitch { 0% { transform: translateX(0); } 50% { transform: translateX(0.04px); opacity: 0.4; } }
+.sc-glow { animation: sc-glow 2.6s ease-in-out infinite; }
+@keyframes sc-glow { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+.sc-float { animation: sc-float 6s ease-in-out infinite; }
+@keyframes sc-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-0.06px); } }
+.sc-swing { animation: sc-swing 2s ease-in-out infinite alternate; }
+@keyframes sc-swing { from { transform: rotate(-8deg); } to { transform: rotate(8deg); } }
+.sc-spark { animation: sc-blink 1.7s steps(1, end) infinite; }
+.sc-buzz { animation: sc-buzz 4s steps(1, end) infinite; }
+@keyframes sc-buzz { 0%, 70%, 74%, 100% { opacity: 0.6; } 71%, 73% { opacity: 0.05; } 72% { opacity: 0.45; } }
+.sc-buzz-soft { animation: sc-buzz-soft 7s ease-in-out infinite; }
+@keyframes sc-buzz-soft { 0%, 100% { opacity: 1; } 52% { opacity: 0.85; } 53% { opacity: 0.4; } 54% { opacity: 0.9; } }
+.sc-flicker { animation: sc-flicker 1.8s steps(1, end) 1; }
+@keyframes sc-flicker { 0%, 100% { opacity: inherit; } 10%, 30%, 60% { opacity: 0.97; } 14%, 34%, 64% { opacity: 0.5; } }
+.sc-lantern { animation: sc-lantern 3s ease-in-out infinite; }
+@keyframes sc-lantern { 0%, 100% { opacity: 1; } 50% { opacity: 0.88; } }
+.sc-drift { animation: sc-drift 26s ease-in-out infinite alternate; }
+.sc-drift-b { animation-duration: 34s; animation-direction: alternate-reverse; }
+@keyframes sc-drift { from { transform: translateX(-80px); } to { transform: translateX(90px); } }
+.sc-dust { animation-name: sc-dust; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-direction: alternate; }
+@keyframes sc-dust { from { transform: translate(0, 0); opacity: 0.1; } to { transform: translate(18px, -30px); opacity: 0.35; } }
+
+/* ---------- Dice ---------- */
+.dice-tumble { animation: dice-tumble 0.32s linear infinite; }
+@keyframes dice-tumble {
+  0% { transform: rotate(0deg) translateY(0); }
+  25% { transform: rotate(90deg) translateY(-6px); }
+  50% { transform: rotate(180deg) translateY(0); }
+  75% { transform: rotate(270deg) translateY(-4px); }
+  100% { transform: rotate(360deg) translateY(0); }
+}
+.dice-settle { animation: dice-settle 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+@keyframes dice-settle { from { transform: scale(1.25) rotate(-12deg); } to { transform: scale(1) rotate(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-enter, .sc-flame, .sc-lurk, .sc-blink, .sc-threat, .sc-glitch, .sc-glow, .sc-float, .sc-swing, .sc-spark, .sc-buzz, .sc-buzz-soft, .sc-lantern, .sc-drift, .sc-dust, .dice-tumble, .dice-settle { animation: none; }
+}

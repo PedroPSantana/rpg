@@ -55,20 +55,20 @@ export function lookOf(name: string, role = "", calm = false): PersonLook {
           ? "glasses"
           : /bar/.test(r)
             ? "apron"
-            : (["none", "none", "glasses", "scarf", "satchel"] as const)[(h >> 5) % 5];
-  const [skin, skinShade] = SKINS[(h >> 3) % SKINS.length];
-  const hair = age === "old" ? HAIR[4 + ((h >> 7) % 2)] : HAIR[(h >> 7) % 4];
+            : (["none", "none", "glasses", "scarf", "satchel"] as const)[(h >>> 5) % 5];
+  const [skin, skinShade] = SKINS[(h >>> 3) % SKINS.length];
+  const hair = age === "old" ? HAIR[4 + ((h >>> 7) % 2)] : HAIR[(h >>> 7) % 4];
   return {
     gender,
     age,
     skin,
     skinShade,
     hair,
-    hairStyle: (h >> 11) % 3,
-    coat: COATS[(h >> 13) % COATS.length],
-    shirt: SHIRTS[(h >> 17) % SHIRTS.length],
+    hairStyle: (h >>> 11) % 3,
+    coat: COATS[(h >>> 13) % COATS.length],
+    shirt: SHIRTS[(h >>> 17) % SHIRTS.length],
     accessory,
-    beard: gender === "m" && (h >> 19) % 3 === 0,
+    beard: gender === "m" && (h >>> 19) % 3 === 0,
     calm,
   };
 }

@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { areaAt, inRect, objectsInArea } from "@/modules/world/areas";
 import { placeKindOf, templateOf, type TemplateId } from "@/modules/world/scenes";
 import type { MapDefinition, MapObject, MapState } from "@/modules/world/schema";
 import { roomStyle, type RoomStyle } from "./decor";
-import { placeAt, placeOpenings, poly, project, roomView, VIEW_H, VIEW_W, type PlacedOpening, type RoomView } from "./projection";
+import { placeAt, placeOpenings, poly, project, roomView, VIEW_W, type PlacedOpening, type RoomView } from "./projection";
 import { Furniture, Sprite, spriteHeight, type SpriteInfo } from "./sprites";
 
 export interface StageProps {
@@ -42,6 +42,18 @@ export function Stage(props: StageProps) {
   const { map, state } = props;
   const wrap = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<string | null>(null);
+  // The frame follows the box's aspect ratio, so wide and tall layouts both show the whole room.
+  const [viewH, setViewH] = useState(900);
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => {
+      const { width, height } = e.contentRect;
+      if (width > 0 && height > 0) setViewH(Math.round(Math.min(1150, Math.max(560, (VIEW_W * height) / width)) / 10) * 10);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const area = areaAt(map, state.player) ?? map.areas[0];
   const exterior = map.kind === "exterior";
   const template = templateOf(map);
@@ -49,7 +61,7 @@ export function Stage(props: StageProps) {
 
   const scene = useMemo(() => {
     const frame = exterior ? exteriorFrame(map, area) : null;
-    const v = roomView(frame?.rect ?? area.rect, { exterior });
+    const v = roomView(frame?.rect ?? area.rect, { exterior, viewH });
     const style = exterior ? null : roomStyle(template, area.id);
     const openings: PlacedOpening[] = exterior
       ? frame!.exits.map((o) => ({ object: o, wall: "north", along: 0, toAreaId: null, side: "back", at: v.toView({ x: o.position.x, y: frame!.rect.y }).X }))
@@ -64,7 +76,7 @@ export function Stage(props: StageProps) {
         if (ch === "T") props2.push({ kind: "tree", p: { x, y } });
       }
     return { v, style, openings, objects, frame, rect, furniture: props2 };
-  }, [map, state, area, exterior, template]);
+  }, [map, state, area, exterior, template, viewH]);
 
   const { v, style, openings, objects, frame, furniture } = scene;
   const player = placeAt(v, state.player);
@@ -134,7 +146,7 @@ export function Stage(props: StageProps) {
 
   return (
     <div ref={wrap} className="absolute inset-0 overflow-hidden bg-black" onPointerMove={onMove}>
-      <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} preserveAspectRatio="xMidYMid slice" className="h-full w-full select-none" role="img" aria-label={`${map.name}: ${area.name}`}>
+      <svg viewBox={`0 0 ${VIEW_W} ${v.viewH}`} preserveAspectRatio="xMidYMid slice" className="h-full w-full select-none" role="img" aria-label={`${map.name}: ${area.name}`}>
         <Defs fog={map.ambience.fog} />
         <g key={sceneKey} className="sc-enter" style={{ transformOrigin: "800px 450px" }}>
           <g style={{ transform: "scale(1.04)", transformOrigin: "800px 450px" }}>
@@ -162,10 +174,10 @@ export function Stage(props: StageProps) {
             </g>
             <g pointerEvents="none">
               <mask id="sc-lantern">
-                <rect x="-100" y="-100" width={VIEW_W + 200} height={VIEW_H + 200} fill="#fff" />
+                <rect x="-100" y="-100" width={VIEW_W + 200} height={v.viewH + 200} fill="#fff" />
                 <ellipse cx={player.x} cy={player.y - player.s * 0.9} rx={Math.min(900, player.s * 4.2)} ry={Math.min(700, player.s * 3.4)} fill="url(#sc-hole)" />
               </mask>
-              <rect key={`d${props.effectNonce}`} x="-100" y="-100" width={VIEW_W + 200} height={VIEW_H + 200} fill="#04030a" opacity={darkness} mask="url(#sc-lantern)" className={props.effects.includes("lights_flicker") ? "sc-flicker" : undefined} />
+              <rect key={`d${props.effectNonce}`} x="-100" y="-100" width={VIEW_W + 200} height={v.viewH + 200} fill="#04030a" opacity={darkness} mask="url(#sc-lantern)" className={props.effects.includes("lights_flicker") ? "sc-flicker" : undefined} />
             </g>
             <g pointerEvents="none">
               {labels.map((l) => (
@@ -179,8 +191,8 @@ export function Stage(props: StageProps) {
             </g>
           </g>
         </g>
-        <rect width={VIEW_W} height={VIEW_H} fill="url(#sc-vignette)" pointerEvents="none" />
-        <rect width={VIEW_W} height={VIEW_H} fill="url(#sc-grain)" opacity="0.07" pointerEvents="none" />
+        <rect width={VIEW_W} height={v.viewH} fill="url(#sc-vignette)" pointerEvents="none" />
+        <rect width={VIEW_W} height={v.viewH} fill="url(#sc-grain)" opacity="0.07" pointerEvents="none" />
       </svg>
       {behind.length > 0 && (
         <div className="absolute inset-x-0 bottom-3 flex justify-center gap-2">
@@ -302,7 +314,7 @@ function Room({ v, style, flicker }: { v: RoomView; style: RoomStyle; flicker: b
   const wh = style.wainscotH;
   return (
     <g>
-      <rect width={VIEW_W} height={VIEW_H} fill="#050407" />
+      <rect width={VIEW_W} height={v.viewH} fill="#050407" />
       {style.ceiling ? (
         <g>
           <polygon points={wallPts.ceil} fill={style.ceiling} />
@@ -497,7 +509,7 @@ function Outside({ v, map, template, placeKind, placeName, facade, rectX }: { v:
   const fw = X1 - X0;
   return (
     <g>
-      <rect width={VIEW_W} height={VIEW_H} fill={sky} />
+      <rect width={VIEW_W} height={v.viewH} fill={sky} />
       <rect width={VIEW_W} height={far.y} fill="url(#sc-fog)" opacity="0.6" />
       {Array.from({ length: 40 }, (_, i) => (
         <circle key={i} cx={(i * 337) % VIEW_W} cy={(i * 131) % Math.max(60, far.y - 120)} r={i % 5 === 0 ? 1.4 : 0.8} fill="#cfd6e6" opacity={0.15 + (i % 4) * 0.08} />

@@ -25,6 +25,8 @@ export interface RoomView {
   Zc: number;
   F: number;
   horizon: number;
+  /** Height of the frame (the width is always VIEW_W). */
+  viewH: number;
   /** Closest depth worth drawing (just in front of the camera). */
   Znear: number;
   /** Which map wall each view wall shows. */
@@ -49,25 +51,26 @@ export function facingFor(rect: Area["rect"]): Facing {
   return rect.w > rect.h * 2.2 ? "east" : "north";
 }
 
-export function roomView(rect: Area["rect"], opts: { exterior?: boolean; facing?: Facing } = {}): RoomView {
+export function roomView(rect: Area["rect"], opts: { exterior?: boolean; facing?: Facing; viewH?: number } = {}): RoomView {
   const facing = opts.facing ?? (opts.exterior ? "north" : facingFor(rect));
   const W = facing === "north" ? rect.w : rect.h;
   const D = facing === "north" ? rect.h : rect.w;
   const H = opts.exterior ? 7 : 2.8;
   // A raised camera looks down into the room, so the floor (where things are) gets most of the frame.
   const camY = opts.exterior ? 2.6 : 2.25;
-  const horizon = opts.exterior ? 300 : 210;
+  const viewH = opts.viewH ?? VIEW_H;
+  const horizon = viewH * (opts.exterior ? 0.36 : 0.235);
   // Pixels per tile at the nearest row of the room, so that row sits near the bottom edge.
-  const k = (VIEW_H - 40 - horizon) / camY;
+  const k = (viewH - 40 - horizon) / camY;
   // Deeper rooms recede more; the far wall also has to fit the frame.
   const ratio = Math.min(0.72, Math.max(0.26, 1 / (1 + D * 0.2)));
-  const sBack = Math.min(ratio * k, (VIEW_W * 0.72) / W, (horizon - 30) / Math.max(0.4, H - camY), (VIEW_H * 0.62) / H);
+  const sBack = Math.min(ratio * k, (VIEW_W * 0.72) / W, (horizon - 30) / Math.max(0.4, H - camY), (viewH * 0.62) / H);
   const r = sBack / k;
   const Zc = Math.max(D - 0.5, 0.5) / (1 - r);
   const F = sBack * Zc;
   const toView = (p: Position) =>
     facing === "north" ? { X: p.x - rect.x + 0.5, Z: p.y - rect.y + 0.5 } : { X: p.y - rect.y + 0.5, Z: rect.x + rect.w - 1 - p.x + 0.5 };
-  return { facing, W, D, H, camY, Zc, F, horizon, Znear: Zc - 0.3, walls: FACINGS[facing], toView };
+  return { facing, W, D, H, camY, Zc, F, horizon, viewH, Znear: Zc - 0.3, walls: FACINGS[facing], toView };
 }
 
 export function project(v: RoomView, X: number, Y: number, Z: number): Projected {

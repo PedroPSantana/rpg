@@ -13,27 +13,6 @@ export type RollDetail = {
   notes: string[];
 };
 
-export const VERB_LABELS: Record<string, string> = {
-  inspect: "Examinar",
-  search: "Investigar",
-  open: "Abrir",
-  close: "Fechar",
-  unlock: "Destrancar",
-  force: "Arrombar",
-  take: "Pegar",
-  use: "Usar",
-  talk: "Conversar",
-  enter: "Atravessar",
-};
-
-export const APPROACHES = [
-  { id: "conversar", label: "Conversar" },
-  { id: "persuadir", label: "Persuadir (Diplomacia)" },
-  { id: "intimidar", label: "Intimidar" },
-  { id: "enganar", label: "Enganar" },
-  { id: "intuir", label: "Ler intenções (Intuição)" },
-] as const;
-
 export const POWER_LABELS: Record<string, string> = {
   "saber-e-poder": "Saber é Poder (2 PE)",
   "110-porcento": "110% (2 PE)",

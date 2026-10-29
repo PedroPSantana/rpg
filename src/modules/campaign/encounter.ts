@@ -1,3 +1,4 @@
+import { lowerName } from "./text";
 import { applyMentalDamage, applyPhysicalDamage, DYING_ROUNDS_TO_DEATH, resolveAttack, rollAttack, rollDamage, rollInitiativeOf, sortInitiative, type Attack } from "@/modules/rules/systems/ordem-paranormal/combat";
 import { parseDice, rollExpression } from "@/modules/rules/core/dice";
 import { SKILL_BY_ID } from "@/modules/rules/systems/ordem-paranormal/data";
@@ -120,7 +121,7 @@ export function combatAction(r: Resolution, a: CombatPlayerAction) {
         target: defense,
         targetLabel: "Defesa",
         peCost: a.special !== "none" ? 2 : 0,
-        stakes: `Acertar ${threat.name} com ${profile.name.toLowerCase()}. Se errar, a criatura age sem ter sofrido nada.`,
+        stakes: `Acertar ${threat.name} com ${lowerName(profile.name)}. Se errar, a criatura age sem ter sofrido nada.`,
       },
       (rng) => rollAttack(attack, defense, rng, options),
     );
@@ -210,7 +211,7 @@ export function threatTurn(r: Resolution) {
   if (res.damageRoll) r.rolls.push(res.damageRoll);
   if (!res.hit) {
     r.fact(`${threat.name} usa ${attack.name}: ${res.attackRoll.total} contra sua Defesa ${r.sheet.defense} — errou.`, "mechanic");
-    r.fact(`${threat.name} investe com ${attack.name.toLowerCase()}, mas você consegue sair do caminho.`);
+    r.fact(`${threat.name} investe com ${lowerName(attack.name)}, mas você consegue sair do caminho.`);
     log(r, `${threat.name} erra.`);
     return;
   }

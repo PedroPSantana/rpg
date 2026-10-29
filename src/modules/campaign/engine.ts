@@ -1,3 +1,4 @@
+import { lowerName } from "./text";
 import { evaluate, type ConditionContext } from "@/modules/adventures/conditions";
 import type { AdventureBlueprint, ClueDef, NpcDef } from "@/modules/adventures/schema";
 import { parseDice, rollExpression, type RollRecord } from "@/modules/rules/core/dice";
@@ -251,8 +252,8 @@ export class Resolution {
       if (!this.state.maps[mapId].objects[objectId]?.revealed) {
         this.map({ type: "reveal_object", mapId, objectId });
         const revealed = this.defs[mapId].objects.find((o) => o.id === objectId)!;
-        this.fact(`Agora você sabe onde fica: ${revealed.name.toLowerCase()}.`);
-        this.remember("fact", `Existe ${revealed.name.toLowerCase()} em ${this.defs[mapId].name}.`);
+        this.fact(`Agora você sabe onde fica: ${lowerName(revealed.name)}.`);
+        this.remember("fact", `Existe ${lowerName(revealed.name)} em ${this.defs[mapId].name}.`);
       }
     }
     for (const f of clue.reveals.flags) this.state.flags[f] = true;
@@ -486,13 +487,13 @@ function go(r: Resolution, areaId: string) {
   const area = def.areas.find((a) => a.id === areaId);
   if (!area || (area.hidden && !ms.revealedAreas.includes(area.id))) throw new ActionRejected("Você não conhece esse lugar aqui.", "world.navigation");
   if (areaAt(def, ms.player)?.id === area.id) {
-    if (!r.beats.some((b) => b.kind === "arrival")) r.fact(`Você já está em ${area.name.toLowerCase()}.`, "narration");
+    if (!r.beats.some((b) => b.kind === "arrival")) r.fact(`Você já está em ${lowerName(area.name)}.`, "narration");
     return;
   }
   const path = pathToArea(def, ms, ms.player, area.id, { passClosedDoors: true });
   if (!path) {
     const blocked = areaOpenings(def, ms, area.id).find((o) => ["locked", "closed"].includes(r.objectState(mapId, o.object.id)));
-    throw new ActionRejected(blocked ? `${blocked.object.name} está trancada. Você precisa abri-la de outro jeito antes de entrar em ${area.name.toLowerCase()}.` : `Não há caminho livre até ${area.name.toLowerCase()}.`, "world.navigation");
+    throw new ActionRejected(blocked ? `${blocked.object.name} está trancada. Você precisa abri-la de outro jeito antes de entrar em ${lowerName(area.name)}.` : `Não há caminho livre até ${lowerName(area.name)}.`, "world.navigation");
   }
   r.walk(path);
 }
@@ -514,12 +515,12 @@ function observe(r: Resolution, objectId?: string) {
   r.fact(profile.first, "narration");
   const things = objectsInArea(def, ms, area.id).filter((o) => o.kind !== "threat");
   const people = things.filter((o) => o.kind === "npc").map((o) => o.name);
-  const objects = things.filter((o) => o.kind !== "npc").map((o) => o.name.toLowerCase());
+  const objects = things.filter((o) => o.kind !== "npc").map((o) => lowerName(o.name));
   if (people.length) r.fact(`${listPt(people)} ${people.length > 1 ? "estão" : "está"} aqui.`, "narration");
   if (objects.length) r.fact(`Chamam sua atenção: ${listPt(objects)}.`, "narration");
   const ways = areaOpenings(def, ms, area.id).map((o) => {
     const st = r.objectState(mapId, o.object.id);
-    const to = o.toAreaId ? def.areas.find((a) => a.id === o.toAreaId)!.name.toLowerCase() : o.object.kind === "exit" ? "a saída" : "outro cômodo";
+    const to = o.toAreaId ? lowerName(def.areas.find((a) => a.id === o.toAreaId)!.name) : o.object.kind === "exit" ? "a saída" : "outro cômodo";
     return `${to} (${st === "open" || st === "broken" ? "aberta" : "fechada"})`;
   });
   if (ways.length) r.fact(`Daqui dá para seguir para ${listPt(ways)}.`, "narration");
@@ -641,7 +642,7 @@ function searchClue(r: Resolution, mapId: string, objectId: string, a: InteractA
   const cost = clue.failure.urgency ? " Se falhar, você perde tempo e a urgência aumenta." : "";
   const roll = r.check(
     { skillId: method.skill, dt: method.dt, powers: a.powers as SkillPower[], searchingClues: true, label: `${skillName}: ${obj.name}` },
-    `Há algo em ${obj.name.toLowerCase()}, mas não está à vista. Encontrar e entender exige ${skillName}.${cost}`,
+    `Há algo em ${lowerName(obj.name)}, mas não está à vista. Encontrar e entender exige ${skillName}.${cost}`,
   );
   entry.attempts += 1;
   if (roll.outcome === "success") {
@@ -659,7 +660,7 @@ function searchClue(r: Resolution, mapId: string, objectId: string, a: InteractA
 
 function door(r: Resolution, mapId: string, objectId: string, verb: string, state: string) {
   const obj = r.defs[mapId].objects.find((o) => o.id === objectId)!;
-  const name = obj.name.toLowerCase();
+  const name = lowerName(obj.name);
   const lock = r.bp.locks.find((l) => l.objectId === objectId);
   switch (verb) {
     case "inspect":
@@ -692,7 +693,7 @@ function door(r: Resolution, mapId: string, objectId: string, verb: string, stat
       if (state !== "locked") throw new ActionRejected(`${obj.name} não está trancada.`, "world.interaction");
       if (lock?.keyItem && r.hasItem(lock.keyItem)) {
         r.setObjectState(mapId, objectId, "closed");
-        r.fact(`A ${r.bp.items.find((i) => i.id === lock.keyItem)!.name.toLowerCase()} entra na fechadura e gira. ${obj.name} está destrancada.`);
+        r.fact(`A ${lowerName(r.bp.items.find((i) => i.id === lock.keyItem)!.name)} entra na fechadura e gira. ${obj.name} está destrancada.`);
         r.remember("event", `Você destrancou ${name}.`);
         return;
       }
@@ -750,8 +751,8 @@ function container(r: Resolution, mapId: string, objectId: string, verb: string,
   const items = r.bp.items.filter((i) => i.objectId === objectId);
   if (r.objectState(mapId, objectId) === "open") r.setObjectState(mapId, objectId, "searched");
   const gained = items.filter((i) => r.gainItem(i.id));
-  for (const item of gained) r.fact(`Ao revirar, você encontra: ${item.name.toLowerCase()}. ${item.description}`);
-  if (!gained.length) r.fact(`Você revira ${obj.name.toLowerCase()}, mas não há mais nada útil.`);
+  for (const item of gained) r.fact(`Ao revirar, você encontra: ${lowerName(item.name)}. ${item.description}`);
+  if (!gained.length) r.fact(`Você revira ${lowerName(obj.name)}, mas não há mais nada útil.`);
 }
 
 type TalkAction = Extract<PlayerAction, { type: "talk" }>;
@@ -843,7 +844,7 @@ function talk(r: Resolution, a: TalkAction) {
     ns.gaveItem = true;
     if (r.gainItem(npc.gives)) {
       const item = r.bp.items.find((i) => i.id === npc.gives)!;
-      r.fact(`${who} entrega a você ${item.name.toLowerCase()}. ${item.description}`);
+      r.fact(`${who} entrega a você ${lowerName(item.name)}. ${item.description}`);
     }
   }
 }

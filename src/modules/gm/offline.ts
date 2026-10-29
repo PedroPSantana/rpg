@@ -83,6 +83,16 @@ function listPt(items: string[]) {
   return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} ou ${items[items.length - 1]}`;
 }
 
+/** Words that only say "somewhere", not which room. */
+const ROOM_WORDS = ["fora", "frente", "fundo", "fundos", "dentro", "perto", "longe", "canto", "porta", "saida", "entrada", "escola", "casa", "casarao", "sobrado", "predio", "rua"];
+
+/** Distinctive words of the place after "para/até/pro" ("vou para a sala de aula" → ["sala", "aula"]). */
+function destinationWords(text: string): string[] {
+  const m = text.match(/ (?:para|pra|pro|ate|rumo a|em direcao a|em direcao ao) (?:o |a |os |as |la |ali )?(.+?)(?= e | com | sem | para | pra | antes | depois | enquanto | $)/);
+  if (!m) return [];
+  return m[1].split(" ").filter((w) => w.length > 3).slice(0, 3);
+}
+
 export function interpretOffline(input: GmContextInput, playerText: string): Interpretation {
   const text = ` ${normalize(playerText)} `;
   const { blueprint: bp, state, sheet, character } = input;
@@ -124,7 +134,9 @@ export function interpretOffline(input: GmContextInput, playerText: string): Int
     npcHere.find((n) => (NPC_ID_WORDS[n.id] ?? []).some((w) => text.includes(` ${w}`))) ??
     npcHere.find((n) => normalize(n.role).split(" ").filter((w) => w.length > 4).some((w) => text.includes(` ${w}`)));
   const quoted = /["“”«»]|^\s*[-—]/.test(playerText);
-  const social = quoted || has(text, ...SOCIAL);
+  // Words typed after clicking someone are said to them, unless they describe looking at or handling them.
+  const addressing = target?.kind === "npc" && (playerText.includes("?") || !has(text, ...LOOK, ...CAREFUL, ...MOTION));
+  const social = quoted || addressing || has(text, ...SOCIAL);
   if (social && (npcRef || npcHere.length)) {
     let npc = npcRef;
     if (!npc) {
@@ -151,10 +163,17 @@ export function interpretOffline(input: GmContextInput, playerText: string): Int
     return { ...EMPTY, intent: "talk", category, npcId: npc.id, approach, reason: playerText };
   }
 
-  // Rooms of this location
+  // Rooms of this location. When the player names a destination ("para a sala de aula"), every
+  // distinctive word of it must belong to the room's name, so "sala de aula" never means "sala de estar".
+  const dest = destinationWords(text);
+  const roomScore = (a: { name: string }) => {
+    const words = normalize(a.name).split(" ").filter((w) => w.length > 3);
+    if (dest.length && dest.some((w) => !words.includes(w))) return 0;
+    return words.filter((w) => text.includes(` ${w}`)).length;
+  };
   const areaScore = map.areas
     .filter((a) => !a.hidden || ms.revealedAreas.includes(a.id))
-    .map((a) => ({ a, score: normalize(a.name).split(" ").filter((w) => w.length > 3 && text.includes(` ${w}`)).length }))
+    .map((a) => ({ a, score: roomScore(a) }))
     .filter((x) => x.score > 0)
     .sort((x, y) => y.score - x.score)[0]?.a;
   const exit = present.find((o) => o.kind === "exit");
@@ -185,8 +204,11 @@ export function interpretOffline(input: GmContextInput, playerText: string): Int
     return { ...EMPTY, intent: "interact", category: "movement", objectId: exit.id, verb: "enter" };
   }
   // A room of the other map ("vou para a biblioteca" from the street): the engine walks in through the exit.
-  const elsewhere = !areaScore && motion ? bp.maps.filter((m) => m.id !== map.id).flatMap((m) => m.areas.filter((a) => !a.hidden).map((a) => ({ a, score: normalize(a.name).split(" ").filter((w) => w.length > 3 && text.includes(` ${w}`)).length }))).filter((x) => x.score > 0).sort((x, y) => y.score - x.score)[0]?.a : undefined;
+  const elsewhere = !areaScore && motion ? bp.maps.filter((m) => m.id !== map.id).flatMap((m) => m.areas.filter((a) => !a.hidden).map((a) => ({ a, score: roomScore(a) }))).filter((x) => x.score > 0).sort((x, y) => y.score - x.score)[0]?.a : undefined;
   if (elsewhere) return { ...EMPTY, intent: "go", category: "movement", areaId: elsewhere.id };
+  if (motion && dest.length && !areaScore && !scored.length && !ROOM_WORDS.some((w) => dest.includes(w))) {
+    return { ...EMPTY, intent: "clarify", category: "movement", clarification: "Você não conhece nenhum cômodo assim por aqui. Para onde quer ir?" };
+  }
   if (motion && areaScore && areaScore.id !== here?.id && !(obj && scored[0]?.score >= 2 && obj.kind !== "door")) {
     return { ...EMPTY, intent: "go", category: "movement", areaId: areaScore.id };
   }

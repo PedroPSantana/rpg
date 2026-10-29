@@ -5,7 +5,7 @@ Plataforma web para jogar campanhas de horror investigativo com um mestre de IA.
 Princípios do projeto:
 
 - **A IA narra; o software decide.** Regras, dados, dano, estado do mundo e desfechos são resolvidos por código determinístico e testado. A IA só interpreta o texto do jogador e narra fatos já resolvidos.
-- **O mundo 3D reage à campanha.** Portas, pistas, NPCs e a criatura mudam de estado por eventos validados e persistidos.
+- **A cena 2.5D reage à campanha.** Cada cômodo tem visual próprio; portas, pistas, NPCs e a criatura mudam de estado por eventos validados e persistidos.
 - **Campanhas isoladas, persistentes e originais.** Cada campanha gera um mistério original a partir de uma semente, com checagem de novidade.
 - **Honestidade sobre as regras.** Nada do livro é reproduzido. Cada regra tem status separados de verificação, implementação e testes (veja `/conhecimento`).
 
@@ -63,16 +63,17 @@ O provedor Anthropic usa saída estruturada validada por Zod e o fallback de mod
 
 1. **Campanhas → Nova campanha**: escolha o sistema e a edição (Tormenta20 e D&D aparecem como "em breve").
 2. **Criar agente**: o assistente mostra só opções implementadas e valida cada escolha com a mesma função usada pelo servidor.
-3. **Jogar**: clique no chão para andar e nos objetos para examinar, abrir, destrancar, arrombar ou conversar. Também dá para escrever livremente ("tento convencer o zelador", "como funciona dano de sanidade?").
-4. O diário mostra missões, pistas, hipóteses e pessoas; a aba Dados mostra cada rolagem feita pelo servidor; a aba Combate aparece quando a criatura ataca.
-5. Toda ação é salva. Feche o navegador e continue depois do mesmo ponto. Campanhas podem ser renomeadas, arquivadas e excluídas no hub.
+3. **Jogar**: escreva o que seu agente faz ou diz ("pergunto à zeladora se ela tem a chave", "vou para a biblioteca", "examino a gaveta com cuidado"). Clique nas pessoas e objetos da cena para falar com eles ou agir sobre eles, e nas portas para mudar de cômodo. A planta no canto da cena também leva a cômodos conhecidos.
+4. Quando a ação tem risco real, o mestre explica o que está em jogo e mostra os dados, modificadores e a DT. **Você rola clicando em Rolar**; o servidor rola e a animação para no resultado real. Conversar, olhar e andar não pedem teste.
+5. O diário separa o que você sabe (fatos confirmados), o que disseram (depoimentos), hipóteses e objetivos; a aba Pistas mostra as pistas e as pessoas que você conheceu; a aba Dados mostra cada rolagem; a aba Combate aparece quando a criatura ataca.
+6. Toda ação é salva. Feche o navegador e continue depois do mesmo ponto. Campanhas podem ser renomeadas, arquivadas e excluídas no hub.
 
 ## Estrutura
 
 ```
 src/
   app/                 páginas (pt-BR) e rotas de API
-  components/          UI: hub, criador, jogo (cena 3D com React Three Fiber), conhecimento
+  components/          UI: hub, criador, jogo, cena 2.5D em SVG (components/scene), conhecimento
   modules/
     rules/             motor de regras (núcleo de dados + sistema Ordem Paranormal)
     knowledge/         catálogo de regras, fontes, busca, ingestão, cobertura

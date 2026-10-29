@@ -33,7 +33,10 @@ function similarity(a: string[], b: string[]) {
 
 /** Removes sentences that repeat an earlier sentence of the same text or of recent narration. */
 export function dedupeSentences(text: string, recent: string[] = []) {
-  const recentSentences = recent.flatMap(splitSentences).map(words).filter((w) => w.length >= 5);
+  const recentSplit = recent.flatMap(splitSentences);
+  const recentSentences = recentSplit.map(words).filter((w) => w.length >= 5);
+  // Short sentences only count as repeats when they are repeated word for word.
+  const recentExact = new Set(recentSplit.map((x) => words(x).join(" ")).filter((x) => x.split(" ").length >= 3));
   const kept: string[] = [];
   const seen: string[][] = [];
   const removed: string[] = [];
@@ -42,7 +45,7 @@ export function dedupeSentences(text: string, recent: string[] = []) {
     for (const s of splitSentences(paragraph)) {
       const w = words(s);
       const dupHere = seen.some((x) => similarity(x, w) >= 0.85 && Math.abs(x.length - w.length) <= 3);
-      const dupRecent = w.length >= 5 && recentSentences.some((x) => similarity(x, w) >= 0.9);
+      const dupRecent = (w.length >= 5 && recentSentences.some((x) => similarity(x, w) >= 0.9)) || recentExact.has(w.join(" "));
       if (dupHere || dupRecent) {
         removed.push(s);
         continue;
@@ -65,7 +68,9 @@ export function stripEcho(text: string, playerText?: string) {
   while (out.length > 1) {
     const s = out[0];
     const sw = words(s);
-    const restates = /^voc[eê]\s/i.test(s) && sw.length <= pw.length + 3 && similarity(sw, pw) >= 0.7;
+    // Compare stems so "examina" (narration) matches "examino" (player).
+    const stem = (ws: string[]) => ws.map((w) => w.slice(0, 5));
+    const restates = /^voc[eê]\s/i.test(s) && sw.length <= pw.length + 3 && similarity(stem(sw), stem(pw)) >= 0.7;
     if (!restates) break;
     out.shift();
   }
