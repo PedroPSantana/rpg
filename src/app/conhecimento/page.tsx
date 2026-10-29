@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { RuleSearch } from "@/components/knowledge/rule-search";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { coverageSummary, ruleCoverage, type TestCoverageStatus } from "@/modules/knowledge/coverage";
@@ -30,6 +31,8 @@ async function chunkCounts() {
 }
 
 export default async function KnowledgePage() {
+  // Reads environment, database and report files on every request.
+  await connection();
   const [report, evals, chunks] = await Promise.all([readTestReport(), readReport<EvalReport>("evals.json"), chunkCounts()]);
   const coverage = ruleCoverage(ALL_RULES, report?.data ?? null);
   const summary = coverageSummary(coverage);
@@ -54,7 +57,11 @@ export default async function KnowledgePage() {
       </div>
       <Card className="mb-10 border-gold/30 p-4 text-sm">
         <span className="font-semibold text-gold">Confirmadas: {summary.confirmed}</span>
-        <span className="text-ash"> de {summary.total} — regras implementadas, com testes passando e verificadas contra fonte autorizada. Enquanto o proprietário não conferir o livro, este número é zero por definição.</span>
+        <span className="text-ash">
+          {" "}
+          de {summary.total} — implementadas, com testes passando e verificadas contra fonte autorizada. Regras do livro só entram aqui depois de conferidas pelo proprietário; procedimentos
+          originais do projeto contam porque a fonte é o próprio projeto.
+        </span>
       </Card>
 
       <section className="mb-10">

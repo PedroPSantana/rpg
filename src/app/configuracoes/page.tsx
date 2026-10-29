@@ -1,8 +1,11 @@
+import { connection } from "next/server";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { gmStatus } from "@/modules/gm";
 import { RULES_SYSTEMS } from "@/modules/rules/registry";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  // Reads environment, database and report files on every request.
+  await connection();
   const gm = gmStatus();
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
