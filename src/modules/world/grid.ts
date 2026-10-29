@@ -102,3 +102,22 @@ export function approachTile(def: MapDefinition, state: MapState, from: Position
     }
   return best;
 }
+
+/**
+ * The map as the player may know it: unrevealed hidden objects are removed, their
+ * tiles rendered as wall, and hidden areas keep only their geometry until revealed.
+ */
+export function playerView(def: MapDefinition, state: MapState): MapDefinition {
+  const concealed = def.objects.filter((o) => !isPresent(def, state, o.id));
+  const tiles = def.tiles.map((row, y) =>
+    concealed.some((o) => o.position.y === y)
+      ? [...row].map((ch, x) => (concealed.some((o) => o.position.x === x && o.position.y === y) && ch === "D" ? "#" : ch)).join("")
+      : row,
+  );
+  return {
+    ...def,
+    tiles,
+    objects: def.objects.filter((o) => isPresent(def, state, o.id)),
+    areas: def.areas.map((a) => (a.hidden && !state.revealedAreas.includes(a.id) ? { ...a, name: "???" } : a)),
+  };
+}
