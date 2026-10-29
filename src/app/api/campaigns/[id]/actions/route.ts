@@ -7,7 +7,7 @@ import { readJson, withPlayer } from "@/server/http";
 type Ctx = { params: Promise<{ id: string }> };
 
 const SubmitSchema = z.union([
-  z.object({ idempotencyKey: z.string(), expectedVersion: z.number().int().optional(), text: z.string().max(2000) }),
+  z.object({ idempotencyKey: z.string(), expectedVersion: z.number().int().optional(), targetId: z.string().max(120).nullable().optional(), text: z.string().max(2000), powers: z.array(z.string().max(40)).max(5).optional() }),
   // The action payload itself is validated by the campaign service.
   z.object({ idempotencyKey: z.string(), expectedVersion: z.number().int().optional(), action: z.record(z.string(), z.unknown()) }),
 ]);

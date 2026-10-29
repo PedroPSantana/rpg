@@ -2,15 +2,19 @@ import "server-only";
 import { generateNovelAdventure } from "@/modules/adventures/generator";
 import { AdventureBlueprintSchema, FingerprintSchema, type AdventureBlueprint } from "@/modules/adventures/schema";
 import { PlayerActionSchema, type PlayerAction } from "@/modules/campaign/actions";
-import { resolveAction, type ActionOutcome } from "@/modules/campaign/engine";
+import type { DiceMode, PendingRoll, RollRequest } from "@/modules/campaign/dice";
+import { runAction, type ActionOutcome, type RunResult } from "@/modules/campaign/engine";
 import { CampaignStateSchema, conditionContextOf, initialCampaignState, type CampaignState } from "@/modules/campaign/state";
 import { evaluate } from "@/modules/adventures/conditions";
 import type { GmContextInput } from "@/modules/gm/context";
 import type { GmOrchestrator } from "@/modules/gm/orchestrator";
 import { getEdition, getSystem } from "@/modules/rules/registry";
+import { SKILL_POWERS } from "@/modules/rules/systems/ordem-paranormal/tests";
 import { cryptoRandom } from "@/modules/rules/core/crypto-random";
 import { isPresent, playerView } from "@/modules/world/grid";
 import type { RandomSource } from "@/modules/rules/core/random";
+import type { RollRecord } from "@/modules/rules/core/dice";
+import { normalize } from "@/modules/knowledge/text";
 import {
   deriveSheet,
   initialState,
@@ -130,7 +134,8 @@ export async function saveCharacter(db: PrismaClient, playerId: string, campaign
 export async function getCampaignView(db: PrismaClient, playerId: string, campaignId: string) {
   const c = await ownedCampaign(db, playerId, campaignId);
   const [narrative, rolls, actions, memories] = await Promise.all([
-    db.narrativeEntry.findMany({ where: { campaignId: c.id }, orderBy: { createdAt: "asc" }, take: 400 }),
+    // The latest 400 entries (newest first, reversed below); entries written in one transaction share a timestamp, so the id breaks ties.
+    db.narrativeEntry.findMany({ where: { campaignId: c.id }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 400 }),
     db.rollLog.findMany({ where: { campaignId: c.id }, orderBy: { createdAt: "desc" }, take: 60 }),
     db.actionLog.findMany({ where: { campaignId: c.id }, orderBy: { sequence: "desc" }, take: 40 }),
     db.campaignMemory.findMany({ where: { campaignId: c.id }, orderBy: { createdAt: "asc" } }),
@@ -142,8 +147,8 @@ export async function getCampaignView(db: PrismaClient, playerId: string, campai
     character: c.character
       ? { id: c.character.id, name: c.character.name, build: OpCharacterBuildSchema.parse(c.character.build), sheet: c.character.sheet as unknown as OpSheet, state: OpCharacterStateSchema.parse(c.character.state) }
       : null,
-    narrative: narrative.map((n) => ({ id: n.id, role: n.role, content: n.content, meta: n.meta, createdAt: n.createdAt.toISOString() })),
-    rolls: rolls.map((r) => ({ id: r.id, label: r.label, total: r.total, detail: r.detail, createdAt: r.createdAt.toISOString() })),
+    narrative: narrative.reverse().map((n) => ({ id: n.id, actionId: n.actionId, role: n.role, content: n.content, meta: n.meta, createdAt: n.createdAt.toISOString() })),
+    rolls: rolls.map((r) => ({ id: r.id, actionId: r.actionId, label: r.label, total: r.total, detail: r.detail, createdAt: r.createdAt.toISOString() })),
     actions: actions.map((a) => ({ id: a.id, sequence: a.sequence, kind: a.kind, status: a.status, narration: a.narration, result: a.result, createdAt: a.createdAt.toISOString() })),
     memories: memories.map((m) => m.content),
   };
@@ -155,10 +160,14 @@ export type CampaignView = Awaited<ReturnType<typeof getCampaignView>>;
 export function toClientView(view: CampaignView) {
   const bp = view.blueprint;
   const st = view.state;
+  const encountered = (threatId: string) => st.mode === "ended" || st.encounter?.threatId === threatId || bp.encounters.some((e) => e.threatId === threatId && e.id in st.encountersResolved);
+  const threatObjects = new Map(bp.encounters.map((e) => [e.objectId, e.threatId]));
   return {
     ...view,
     state: {
       ...st,
+      // Dice already rolled are shown in `rolls`; the raw tapes stay on the server.
+      pending: st.pending ? { ...st.pending, tape: { player: [], world: [] }, action: {} } : null,
       maps: Object.fromEntries(
         bp.maps.map((m) => {
           const ms = st.maps[m.id];
@@ -168,11 +177,15 @@ export function toClientView(view: CampaignView) {
     },
     blueprint: {
       ...bp,
-      maps: bp.maps.map((m) => playerView(m, st.maps[m.id])),
+      maps: bp.maps.map((m) => {
+        const pv = playerView(m, st.maps[m.id]);
+        // Until met, a creature is only "something" in the dark.
+        return { ...pv, objects: pv.objects.map((o) => (threatObjects.has(o.id) && !encountered(threatObjects.get(o.id)!) ? { ...o, name: "Presença desconhecida", description: "Algo se move na escuridão." } : o)) };
+      }),
       antagonist: st.mode === "ended" ? bp.antagonist : { name: "???", nature: "", motive: "" },
       npcs: bp.npcs.map((n) => ({ id: n.id, name: n.name, role: n.role, mapId: n.mapId, objectId: n.objectId })),
       clues: bp.clues.map((c) => ({ id: c.id, title: st.clues[c.id].discovered ? c.title : "???", description: st.clues[c.id].discovered ? c.description : "", importance: c.importance, mapId: c.mapId, objectId: c.objectId, discoveredBy: st.clues[c.id].discoveredBy })),
-      threats: bp.threats.map((t) => ({ id: t.id, name: st.encounter || t.id in st.threatPv ? t.name : "???", description: t.description, pv: t.pv, element: t.element })),
+      threats: bp.threats.map((t) => (encountered(t.id) ? { id: t.id, name: t.name, description: t.description, pv: t.pv, element: t.element } : { id: t.id, name: "???", description: "", pv: 0, element: t.element })),
       endings: [],
       derivedFlags: [],
       locks: [],
@@ -184,41 +197,67 @@ export function toClientView(view: CampaignView) {
   };
 }
 
+/** GM planning notes and the engine's hints about alternatives never reach the player. */
 function stripGmNotes(result: unknown) {
-  if (result && typeof result === "object" && "gmNotes" in result) {
-    const { gmNotes: _n, ...rest } = result as Record<string, unknown>;
+  if (result && typeof result === "object") {
+    const { gmNotes: _n, suggestions: _s, narrationSuggestions: _ns, tape: _t, ...rest } = result as Record<string, unknown>;
     void _n;
+    void _s;
+    void _ns;
+    void _t;
     return rest;
   }
   return result;
 }
 
-export type SubmitInput = { idempotencyKey: string; expectedVersion?: number } & ({ action: PlayerAction } | { text: string });
+export type SubmitInput = { idempotencyKey: string; expectedVersion?: number; targetId?: string | null } & ({ action: PlayerAction } | { text: string; powers?: string[] });
+
+type Outcome = Pick<ActionOutcome, "facts" | "rolls" | "events" | "mapEvents" | "verdict">;
 
 export interface SubmitResult {
-  status: "resolved" | "rejected" | "clarify" | "rules" | "duplicate";
+  status: "resolved" | "rejected" | "clarify" | "rules" | "duplicate" | "roll";
   actionId?: string;
   message?: string;
-  outcome?: Pick<ActionOutcome, "facts" | "rolls" | "events" | "mapEvents" | "suggestions">;
+  outcome?: Outcome;
   narration?: string | null;
+  /** Waiting for the player's click (status "roll"). */
+  request?: RollRequest;
+  /** Rolls made by this call, the player's own roll first. */
+  rolled?: RollRecord[];
   version: number;
 }
 
-function gmInput(view: CampaignView): GmContextInput {
+function gmInput(view: CampaignView, targetId?: string | null): GmContextInput {
   return {
     blueprint: view.blueprint,
     state: view.state,
     sheet: view.character!.sheet,
     character: { ...view.character!.state, name: view.character!.name, concept: view.character!.build.concept },
     history: view.narrative.slice(-12).map((n) => ({ role: n.role, content: n.content })),
-    memories: view.memories,
+    targetId: targetId ?? null,
   };
 }
 
+function engineContext(view: CampaignView, dice: DiceMode, rng: RandomSource) {
+  const { pending: _p, ...rest } = view.state;
+  void _p;
+  return {
+    blueprint: view.blueprint,
+    state: { ...rest, pending: null },
+    character: { build: view.character!.build, sheet: view.character!.sheet, state: view.character!.state },
+    rng,
+    dice,
+  };
+}
+
+/** The same sentence sent twice in quick succession is one action (double click, Enter + button, retry). */
+const RESUBMIT_WINDOW_MS = 20_000;
+
 /**
  * The action pipeline: idempotency → (AI interpretation) → deterministic
- * resolution → atomic commit → (AI narration). A completed action is never
- * lost or re-executed if narration fails.
+ * resolution → either a pending roll (the player must click) or an atomic
+ * commit → (AI narration). A completed action is never lost or re-executed if
+ * narration fails, and the AI never touches persistence.
  */
 export async function submitAction(db: PrismaClient, gm: GmOrchestrator, playerId: string, campaignId: string, input: SubmitInput, rng: RandomSource = cryptoRandom): Promise<SubmitResult> {
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(input.idempotencyKey)) throw new ServiceError("Chave de idempotência inválida.", 400);
@@ -228,84 +267,185 @@ export async function submitAction(db: PrismaClient, gm: GmOrchestrator, playerI
   const view = await getCampaignView(db, playerId, campaignId);
   if (!view.character) throw new ServiceError("Crie um personagem antes de jogar.", 409);
   if (view.campaign.status === "ARCHIVED") throw new ServiceError("Campanha arquivada. Desarquive para continuar.", 409);
+  if ("text" in input) {
+    const recent = await db.actionLog.findFirst({ where: { campaignId: view.campaign.id }, orderBy: { createdAt: "desc" } });
+    const recentText = (recent?.input as { text?: string | null } | undefined)?.text;
+    if (recent && recentText && normalize(recentText) === normalize(input.text) && Date.now() - recent.createdAt.getTime() < RESUBMIT_WINDOW_MS) {
+      return duplicateResult(db, recent);
+    }
+  }
   if (input.expectedVersion !== undefined && input.expectedVersion !== view.campaign.version) {
     throw new ServiceError("O estado da campanha mudou. Recarregue para continuar.", 409);
   }
+  if (view.state.pending) throw new ServiceError("Há uma rolagem pendente. Role os dados ou desista da ação antes de fazer outra coisa.", 409);
 
   let action: PlayerAction;
   let playerText: string | undefined;
   if ("text" in input) {
     playerText = input.text.trim().slice(0, 2000);
     if (!playerText) throw new ServiceError("Escreva o que seu personagem faz.", 400);
-    const interp = await gm.interpret(gmInput(view), playerText);
+    const interp = await gm.interpret(gmInput(view, input.targetId), playerText);
     if (interp.kind !== "action") {
       const message = interp.kind === "clarify" ? interp.question : interp.answer;
       await recordNonAction(db, view, input.idempotencyKey, playerText, interp.kind, message);
       return { status: interp.kind, message, version: view.campaign.version };
     }
     action = interp.action;
+    // Powers the player armed in the UI ride along with tests; the engine checks they apply and that PE suffices.
+    const powers = (input.powers ?? []).filter((p): p is (typeof SKILL_POWERS)[number] => (SKILL_POWERS as readonly string[]).includes(p));
+    if (powers.length && "powers" in action) action = { ...action, powers } as PlayerAction;
   } else {
     const parsed = PlayerActionSchema.safeParse(input.action);
     if (!parsed.success) throw new ServiceError("Ação malformada.", 400, parsed.error.issues);
     action = parsed.data;
   }
 
-  const result = resolveAction({ blueprint: view.blueprint, state: view.state, character: { build: view.character.build, sheet: view.character.sheet, state: view.character.state }, rng }, action);
-
-  if (!result.ok) {
-    await recordNonAction(db, view, input.idempotencyKey, playerText ?? describeAction(action), "rejected", result.reason, action);
-    return { status: "rejected", message: result.reason, version: view.campaign.version };
+  const run = runAction(engineContext(view, { kind: "manual", tape: { player: [], world: [] }, live: 0, source: rng }, rng), action);
+  if (run.ok === false) {
+    await recordNonAction(db, view, input.idempotencyKey, playerText ?? describeAction(action), "rejected", run.reason, action);
+    return { status: "rejected", message: run.reason, version: view.campaign.version };
   }
+  if (run.ok === "roll") return createPending(db, view, input.idempotencyKey, action, playerText ?? null, run);
 
+  const actionId = await commit(db, view, { key: input.idempotencyKey, action, text: playerText ?? null, logId: null }, run);
+  const narration = await narrateAction(db, gm, playerId, campaignId, actionId);
+  return { status: "resolved", actionId, outcome: pick(run), narration, version: view.campaign.version + 1 };
+}
+
+function pick(o: ActionOutcome): Outcome {
+  return { facts: o.facts, rolls: o.rolls, events: o.events, mapEvents: o.mapEvents, verdict: o.verdict };
+}
+
+type RollRun = Extract<RunResult, { ok: "roll" }>;
+
+async function createPending(db: PrismaClient, view: CampaignView, key: string, action: PlayerAction, text: string | null, run: RollRun): Promise<SubmitResult> {
   const nextVersion = view.campaign.version + 1;
-  let actionId: string;
   try {
-    actionId = await db.$transaction(async (tx) => {
-      const updated = await tx.campaign.updateMany({
-        where: { id: view.campaign.id, version: view.campaign.version },
-        data: { state: json(result.state), version: nextVersion, status: result.state.mode === "ended" ? "COMPLETED" : undefined },
-      });
-      if (updated.count !== 1) throw new ServiceError("Outra ação foi registrada ao mesmo tempo. Recarregue.", 409);
-      await tx.character.update({ where: { id: view.character!.id }, data: { state: json(result.characterState) } });
+    const actionId = await db.$transaction(async (tx) => {
+      const minSeq = await tx.actionLog.findFirst({ where: { campaignId: view.campaign.id, sequence: { lt: 0 } }, orderBy: { sequence: "asc" }, select: { sequence: true } });
       const log = await tx.actionLog.create({
-        data: {
-          campaignId: view.campaign.id,
-          idempotencyKey: input.idempotencyKey,
-          sequence: nextVersion,
-          kind: action.type,
-          input: json({ action, text: playerText ?? null }),
-          result: json({ facts: result.facts, events: result.events, mapEvents: result.mapEvents, suggestions: result.suggestions, rolls: result.rolls }),
-          status: "RESOLVED",
-        },
+        data: { campaignId: view.campaign.id, idempotencyKey: key, sequence: (minSeq?.sequence ?? 0) - 1, kind: action.type, input: json({ action, text }), result: json({}), status: "PENDING" },
       });
-      if (result.rolls.length) {
-        await tx.rollLog.createMany({ data: result.rolls.map((r) => ({ campaignId: view.campaign.id, actionId: log.id, label: r.label, detail: json(r), total: r.total })) });
-      }
-      await tx.narrativeEntry.create({ data: { campaignId: view.campaign.id, actionId: log.id, role: "PLAYER", content: playerText ?? describeAction(action) } });
+      const pending: PendingRoll = { actionId: log.id, action: action as Record<string, unknown>, text, tape: run.tape, request: run.request, rolls: run.rolls, cancellable: run.playerRolls === 0 };
+      const updated = await tx.campaign.updateMany({ where: { id: view.campaign.id, version: view.campaign.version }, data: { state: json({ ...view.state, pending }), version: nextVersion } });
+      if (updated.count !== 1) throw new ServiceError("Outra ação foi registrada ao mesmo tempo. Recarregue.", 409);
+      await tx.narrativeEntry.create({ data: { campaignId: view.campaign.id, actionId: log.id, role: "PLAYER", content: text ?? describeAction(action) } });
+      await tx.narrativeEntry.create({ data: { campaignId: view.campaign.id, actionId: log.id, role: "SYSTEM", content: run.request.stakes, meta: json({ kind: "roll_request", label: run.request.label }) } });
       return log.id;
     });
+    return { status: "roll", actionId, request: run.request, rolled: run.rolls, version: nextVersion };
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      const dup = await db.actionLog.findFirst({ where: { campaignId, idempotencyKey: input.idempotencyKey } });
+      const dup = await db.actionLog.findFirst({ where: { campaignId: view.campaign.id, idempotencyKey: key } });
       if (dup) return duplicateResult(db, dup);
     }
     throw e;
   }
+}
 
+/** Commits a fully resolved action atomically (state, character, log, rolls, journal lines). */
+async function commit(db: PrismaClient, view: CampaignView, a: { key: string; action: PlayerAction; text: string | null; logId: string | null }, out: ActionOutcome): Promise<string> {
+  const nextVersion = view.campaign.version + 1;
+  const state = { ...out.state, pending: null };
+  try {
+    return await db.$transaction(async (tx) => {
+      const updated = await tx.campaign.updateMany({
+        where: { id: view.campaign.id, version: view.campaign.version },
+        data: { state: json(state), version: nextVersion, status: state.mode === "ended" ? "COMPLETED" : undefined },
+      });
+      if (updated.count !== 1) throw new ServiceError("Outra ação foi registrada ao mesmo tempo. Recarregue.", 409);
+      await tx.character.update({ where: { id: view.character!.id }, data: { state: json(out.characterState) } });
+      const result = json({ facts: out.facts, beats: out.beats, events: out.events, mapEvents: out.mapEvents, suggestions: out.suggestions, rolls: out.rolls, verdict: out.verdict });
+      const log = a.logId
+        ? await tx.actionLog.update({ where: { id: a.logId }, data: { sequence: nextVersion, status: "RESOLVED", result } })
+        : await tx.actionLog.create({ data: { campaignId: view.campaign.id, idempotencyKey: a.key, sequence: nextVersion, kind: a.action.type, input: json({ action: a.action, text: a.text }), result, status: "RESOLVED" } });
+      if (out.rolls.length) {
+        await tx.rollLog.createMany({ data: out.rolls.map((r) => ({ campaignId: view.campaign.id, actionId: log.id, label: r.label, detail: json(r), total: r.total })) });
+      }
+      // Clicks on the scene (moving, looking) are not things the player "said".
+      if (!a.logId && (a.text || !["move", "go", "observe"].includes(a.action.type))) {
+        await tx.narrativeEntry.create({ data: { campaignId: view.campaign.id, actionId: log.id, role: "PLAYER", content: a.text ?? describeAction(a.action) } });
+      }
+      return log.id;
+    });
+  } catch (e) {
+    if (!a.logId && e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      const dup = await db.actionLog.findFirst({ where: { campaignId: view.campaign.id, idempotencyKey: a.key } });
+      if (dup) return dup.id;
+    }
+    throw e;
+  }
+}
+
+/**
+ * Rolls the player's pending die and resumes the action. Idempotent: a repeated
+ * click for a roll that was already made returns that roll instead of a new one.
+ */
+export async function rollPending(db: PrismaClient, gm: GmOrchestrator, playerId: string, campaignId: string, input: { actionId: string; index: number }, rng: RandomSource = cryptoRandom): Promise<SubmitResult> {
+  const view = await getCampaignView(db, playerId, campaignId);
+  const pending = view.state.pending;
+  if (!pending || pending.actionId !== input.actionId) {
+    const log = await db.actionLog.findFirst({ where: { id: input.actionId, campaignId: view.campaign.id } });
+    if (log && log.status !== "PENDING") return duplicateResult(db, log);
+    throw new ServiceError("Não há rolagem pendente para esta ação.", 409);
+  }
+  if (input.index !== pending.request.index) {
+    // A double click on a roll that already happened: show the same dice again.
+    if (input.index < pending.request.index) return { status: "duplicate", actionId: pending.actionId, request: pending.request, rolled: pending.rolls, version: view.campaign.version };
+    throw new ServiceError("Rolagem fora de ordem.", 409);
+  }
+  const action = PlayerActionSchema.parse(pending.action);
+  const run = runAction(engineContext(view, { kind: "manual", tape: pending.tape, live: 1, source: rng }, rng), action);
+  const rolled = run.ok === false ? [] : run.rolls.slice(pending.rolls.length);
+  const nextVersion = view.campaign.version + 1;
+
+  if (run.ok === false) {
+    // The world did not change between click and replay, so this means the action became illegal; drop it without effect.
+    await db.$transaction(async (tx) => {
+      const updated = await tx.campaign.updateMany({ where: { id: view.campaign.id, version: view.campaign.version }, data: { state: json({ ...view.state, pending: null }), version: nextVersion } });
+      if (updated.count !== 1) throw new ServiceError("Outra ação foi registrada ao mesmo tempo. Recarregue.", 409);
+      await tx.actionLog.update({ where: { id: pending.actionId }, data: { status: "REJECTED", result: json({ message: run.reason }), narration: run.reason } });
+      await tx.narrativeEntry.create({ data: { campaignId: view.campaign.id, actionId: pending.actionId, role: "SYSTEM", content: run.reason, meta: json({ kind: "rejected" }) } });
+    });
+    return { status: "rejected", actionId: pending.actionId, message: run.reason, version: nextVersion };
+  }
+  if (run.ok === "roll") {
+    const next: PendingRoll = { ...pending, tape: run.tape, request: run.request, rolls: run.rolls, cancellable: false };
+    await db.$transaction(async (tx) => {
+      const updated = await tx.campaign.updateMany({ where: { id: view.campaign.id, version: view.campaign.version }, data: { state: json({ ...view.state, pending: next }), version: nextVersion } });
+      if (updated.count !== 1) throw new ServiceError("Outra ação foi registrada ao mesmo tempo. Recarregue.", 409);
+      await tx.narrativeEntry.create({ data: { campaignId: view.campaign.id, actionId: pending.actionId, role: "SYSTEM", content: run.request.stakes, meta: json({ kind: "roll_request", label: run.request.label }) } });
+    });
+    return { status: "roll", actionId: pending.actionId, request: run.request, rolled, version: nextVersion };
+  }
+  const actionId = await commit(db, view, { key: "", action, text: pending.text, logId: pending.actionId }, run);
   const narration = await narrateAction(db, gm, playerId, campaignId, actionId);
-  return {
-    status: "resolved",
-    actionId,
-    outcome: { facts: result.facts, rolls: result.rolls, events: result.events, mapEvents: result.mapEvents, suggestions: result.suggestions },
-    narration,
-    version: nextVersion,
-  };
+  return { status: "resolved", actionId, outcome: pick(run), rolled, narration, version: nextVersion };
+}
+
+/** Backs out of a pending action before any of its dice were rolled. Nothing changes in the world. */
+export async function cancelPending(db: PrismaClient, playerId: string, campaignId: string, actionId: string) {
+  const view = await getCampaignView(db, playerId, campaignId);
+  const pending = view.state.pending;
+  if (!pending || pending.actionId !== actionId) throw new ServiceError("Não há rolagem pendente para esta ação.", 409);
+  if (!pending.cancellable) throw new ServiceError("Os dados desta ação já começaram a rolar; termine a ação.", 409);
+  await db.$transaction(async (tx) => {
+    const updated = await tx.campaign.updateMany({ where: { id: view.campaign.id, version: view.campaign.version }, data: { state: json({ ...view.state, pending: null }), version: view.campaign.version + 1 } });
+    if (updated.count !== 1) throw new ServiceError("Outra ação foi registrada ao mesmo tempo. Recarregue.", 409);
+    await tx.actionLog.update({ where: { id: actionId }, data: { status: "REJECTED", result: json({ message: "Ação cancelada antes da rolagem.", cancelled: true }) } });
+    await tx.narrativeEntry.create({ data: { campaignId: view.campaign.id, actionId, role: "SYSTEM", content: "Você desiste da tentativa antes de rolar os dados.", meta: json({ kind: "cancelled" }) } });
+  });
+  return { version: view.campaign.version + 1 };
 }
 
 async function duplicateResult(db: PrismaClient, log: { id: string; status: string; narration: string | null; result: unknown; campaignId: string }): Promise<SubmitResult> {
-  const c = await db.campaign.findUniqueOrThrow({ where: { id: log.campaignId }, select: { version: true } });
-  const r = log.result as SubmitResult["outcome"] & { message?: string };
-  return { status: "duplicate", actionId: log.id, outcome: r, narration: log.narration, message: r?.message, version: c.version };
+  const c = await db.campaign.findUniqueOrThrow({ where: { id: log.campaignId }, select: { version: true, state: true } });
+  if (log.status === "PENDING") {
+    const st = CampaignStateSchema.parse(c.state);
+    if (st.pending?.actionId === log.id) return { status: "duplicate", actionId: log.id, request: st.pending.request, rolled: st.pending.rolls, version: c.version };
+  }
+  const r = log.result as (Outcome & { message?: string }) | null;
+  return { status: "duplicate", actionId: log.id, outcome: r ?? undefined, narration: log.narration, message: r?.message, version: c.version };
 }
 
 async function recordNonAction(db: PrismaClient, view: CampaignView, key: string, playerText: string, kind: string, message: string, action?: PlayerAction) {
@@ -327,7 +467,8 @@ async function recordNonAction(db: PrismaClient, view: CampaignView, key: string
     await tx.narrativeEntry.createMany({
       data: [
         { campaignId: view.campaign.id, role: "PLAYER", content: playerText },
-        { campaignId: view.campaign.id, role: "SYSTEM", content: message, meta: json({ kind }) },
+        // A clarifying question is the GM talking; rules answers and refusals are system notes.
+        { campaignId: view.campaign.id, role: kind === "clarify" ? "GM" : "SYSTEM", content: message, meta: json({ kind }) },
       ],
     });
   });
@@ -344,17 +485,18 @@ export async function narrateAction(db: PrismaClient, gm: GmOrchestrator, player
   if (log.status !== "RESOLVED") return log.narration;
   try {
     const view = await getCampaignView(db, playerId, campaignId);
-    const stored = log.result as { facts: string[]; suggestions: string[]; rolls: ActionOutcome["rolls"]; events: ActionOutcome["events"] };
+    const stored = log.result as unknown as Pick<ActionOutcome, "facts" | "suggestions" | "rolls" | "events"> & Partial<Pick<ActionOutcome, "beats" | "verdict">>;
     const input = log.input as { text: string | null; action: PlayerAction };
-    const routine = input.action.type === "move" && !input.text && !stored.events?.length && !stored.rolls?.length;
-    const n = await gm.narrate({ input: gmInput(view), outcome: stored, playerText: input.text ?? describeAction(input.action), routine });
-    const dialogue = n.npcDialogue.map((d) => `${view.blueprint.npcs.find((x) => x.id === d.npcId)?.name ?? d.npcId}: "${d.line}"`).join("\n");
+    const routine = ["move", "go", "observe"].includes(input.action.type) && !input.text;
+    const n = await gm.narrate({ input: gmInput(view), outcome: stored, playerText: input.text ?? describeAction(input.action), actionType: input.action.type, routine });
+    const dialogue = n.npcDialogue.map((d) => `— ${d.line} — diz ${view.blueprint.npcs.find((x) => x.id === d.npcId)?.name.split(" ")[0] ?? d.npcId}.`).join("\n");
     const text = dialogue ? `${n.narration}\n\n${dialogue}` : n.narration;
+    const progress = (stored.beats ?? []).filter((b) => b.kind === "progress").map((b) => b.text);
     await db.$transaction(async (tx) => {
-      const claimed = await tx.actionLog.updateMany({ where: { id: log.id, narration: null }, data: { narration: text, status: "NARRATED", result: json({ ...stored, gmNotes: n.gmNotes, effects: n.effects, narrationSuggestions: n.suggestions, provider: n.provider, degraded: n.degraded }) } });
+      const claimed = await tx.actionLog.updateMany({ where: { id: log.id, narration: null }, data: { narration: text, status: "NARRATED", result: json({ ...stored, gmNotes: n.gmNotes, effects: n.effects, provider: n.provider, degraded: n.degraded, guardIssues: n.issues }) } });
       if (claimed.count !== 1) return;
-      await tx.narrativeEntry.create({ data: { campaignId, actionId: log.id, role: "GM", content: text, meta: json({ effects: n.effects, suggestions: n.suggestions, provider: n.provider, degraded: n.degraded }) } });
-      if (n.memory) await tx.campaignMemory.create({ data: { campaignId, kind: "FACT", content: n.memory } });
+      await tx.narrativeEntry.create({ data: { campaignId, actionId: log.id, role: "GM", content: text, meta: json({ effects: n.effects, provider: n.provider, degraded: n.degraded }) } });
+      if (progress.length) await tx.narrativeEntry.create({ data: { campaignId, actionId: log.id, role: "SYSTEM", content: progress.join(" "), meta: json({ kind: "progress" }) } });
     });
     return (await db.actionLog.findUniqueOrThrow({ where: { id: log.id } })).narration;
   } catch {
@@ -364,14 +506,16 @@ export async function narrateAction(db: PrismaClient, gm: GmOrchestrator, player
 }
 
 const ACTION_TEXT: Record<PlayerAction["type"], string> = {
-  move: "Você se move.",
-  interact: "Você interage com o ambiente.",
-  talk: "Você conversa.",
-  skill_check: "Você tenta algo arriscado.",
+  move: "Você caminha até outro ponto.",
+  go: "Você segue para outro cômodo.",
+  observe: "Você observa ao redor.",
+  interact: "Você examina algo de perto.",
+  talk: "Você puxa conversa.",
+  skill_check: "Você arrisca uma tentativa.",
   decide: "Você toma uma decisão.",
   attack: "Você ataca.",
   flee: "Você tenta fugir.",
-  first_aid: "Você presta primeiros socorros.",
+  first_aid: "Você trata os ferimentos.",
   abandon: "Você abandona a missão.",
   narrative: "Você age.",
 };

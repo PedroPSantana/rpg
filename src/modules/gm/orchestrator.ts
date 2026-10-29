@@ -2,6 +2,7 @@ import { PlayerActionSchema, type PlayerAction } from "@/modules/campaign/action
 import { findRules } from "@/modules/knowledge";
 import type { GmContextInput } from "./context";
 import { OfflineGmProvider } from "./offline";
+import { guardNarration } from "./guard";
 import type { GmProvider, NarrateRequest } from "./provider";
 import { InterpretationSchema, NarrationSchema, type Interpretation, type Narration } from "./schema";
 
@@ -32,12 +33,18 @@ async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, ms: numbe
 export function toPlayerAction(i: Interpretation, playerText: string): PlayerAction | null {
   const candidate = (() => {
     switch (i.intent) {
+      case "observe":
+        return { type: "observe", objectId: i.objectId ?? undefined };
+      case "go":
+        return { type: "go", areaId: i.areaId };
       case "interact":
         return { type: "interact", objectId: i.objectId, verb: i.verb, skillId: i.skillId ?? undefined, powers: [] };
       case "talk":
         return { type: "talk", npcId: i.npcId, approach: i.approach ?? "conversar", message: playerText.slice(0, 1000), powers: [] };
       case "skill_check":
-        return { type: "skill_check", skillId: i.skillId, dt: i.dt, reason: (i.reason ?? playerText).slice(0, 300), powers: [] };
+        // An improvised test needs something at stake; otherwise the action just happens.
+        if (!i.stakes?.trim()) return { type: "narrative", text: playerText.slice(0, 2000) };
+        return { type: "skill_check", skillId: i.skillId, dt: i.dt, reason: (i.reason ?? playerText).slice(0, 300), stakes: i.stakes.slice(0, 300), powers: [] };
       case "decide":
         return { type: "decide", optionId: i.optionId };
       case "attack":
@@ -107,27 +114,41 @@ export class GmOrchestrator {
     return { kind: "action", action, interpretation: i, provider };
   }
 
-  /** Never throws: narration failures degrade to deterministic narration of the same facts. */
-  async narrate(req: NarrateRequest): Promise<Narration & { provider: string; degraded: boolean }> {
-    if (req.routine) {
-      // Plain movement: deterministic narration keeps clicks fast and free.
+  /**
+   * Never throws: narration that fails validation (schema, contradiction with
+   * the dice, leaked secrets) is retried, then replaced by deterministic
+   * narration of the same facts. Repetition is repaired, not rejected.
+   */
+  async narrate(req: NarrateRequest): Promise<Narration & { provider: string; degraded: boolean; issues: string[] }> {
+    const guardCtx = { input: req.input, facts: req.outcome.facts, verdict: req.outcome.verdict, playerText: req.playerText };
+    const offline = async (degraded: boolean, issues: string[]) => {
       const n = await this.fallback.narrate(req);
-      return { ...n, provider: this.fallback.id, degraded: false };
-    }
+      const g = guardNarration(n, guardCtx);
+      return { ...(g.ok ? g.narration : n), provider: this.fallback.id, degraded, issues };
+    };
+    if (req.routine) return offline(false, []);
     const attempts = (this.opts.retries ?? 1) + 1;
     const npcIds = new Set(req.input.blueprint.npcs.map((n) => n.id));
+    const issues: string[] = [];
     for (let i = 0; i < attempts; i++) {
       try {
         const raw = await withTimeout((signal) => this.provider.narrate(req, signal), this.opts.timeoutMs ?? 45000);
         const parsed = NarrationSchema.safeParse(raw);
-        if (!parsed.success) continue;
-        const n = parsed.data;
-        return { ...n, npcDialogue: n.npcDialogue.filter((d) => npcIds.has(d.npcId)), provider: this.provider.id, degraded: false };
+        if (!parsed.success) {
+          issues.push("resposta fora do formato");
+          continue;
+        }
+        const n = { ...parsed.data, npcDialogue: parsed.data.npcDialogue.filter((d) => npcIds.has(d.npcId)) };
+        const g = guardNarration(n, guardCtx);
+        if (!g.ok) {
+          issues.push(...g.issues);
+          continue;
+        }
+        return { ...g.narration, provider: this.provider.id, degraded: false, issues };
       } catch {
-        // retry
+        issues.push("falha ou tempo esgotado");
       }
     }
-    const n = await this.fallback.narrate(req);
-    return { ...n, provider: this.fallback.id, degraded: this.provider.id !== this.fallback.id };
+    return offline(this.provider.id !== this.fallback.id, issues);
   }
 }

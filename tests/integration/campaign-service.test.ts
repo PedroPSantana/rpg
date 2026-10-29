@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "@/server/db";
-import { createCampaign, deleteCampaign, getCampaignView, listCampaigns, narrateAction, saveCharacter, submitAction, toClientView, updateCampaign, ServiceError } from "@/server/campaigns";
+import { cancelPending, createCampaign, deleteCampaign, getCampaignView, listCampaigns, narrateAction, rollPending, saveCharacter, submitAction, toClientView, updateCampaign, ServiceError, type SubmitInput, type SubmitResult } from "@/server/campaigns";
 import { GmOrchestrator } from "@/modules/gm/orchestrator";
 import { OfflineGmProvider } from "@/modules/gm/offline";
 import type { GmProvider } from "@/modules/gm/provider";
@@ -12,6 +12,17 @@ const db = url ? createDb(url) : (null as never);
 const maxRng = { die: (s: number) => (assertSides(s), s) };
 const offline = new GmOrchestrator(new OfflineGmProvider(), { retries: 0 });
 const key = () => `k_${crypto.randomUUID().replace(/-/g, "")}`;
+
+/** Submits an action and clicks every roll it asks for, like the player would. */
+async function play(gm: GmOrchestrator, playerId: string, campaignId: string, input: SubmitInput, rng = maxRng): Promise<SubmitResult & { clicks: number }> {
+  let res = await submitAction(db, gm, playerId, campaignId, input, rng);
+  let clicks = 0;
+  while (res.status === "roll") {
+    res = await rollPending(db, gm, playerId, campaignId, { actionId: res.actionId!, index: res.request!.index }, rng);
+    clicks++;
+  }
+  return { ...res, clicks };
+}
 
 async function player() {
   return db.player.create({ data: {} });
@@ -54,13 +65,14 @@ describe.skipIf(!url)("campaign service (PostgreSQL)", () => {
     const clue = view.blueprint.clues.find((c) => c.id === "pista-rastro")!;
     const k = key();
     const input = { idempotencyKey: k, action: { type: "interact" as const, objectId: clue.objectId, verb: "search" as const, powers: [] } };
-    const first = await submitAction(db, offline, playerId, campaignId, input, maxRng);
+    const first = await play(offline, playerId, campaignId, input);
     const second = await submitAction(db, offline, playerId, campaignId, input, maxRng);
     expect(first.status).toBe("resolved");
     expect(second.status).toBe("duplicate");
     expect(second.actionId).toBe(first.actionId);
     const after = await getCampaignView(db, playerId, campaignId);
-    expect(after.campaign.version).toBe(1);
+    // One version for the pending roll, one for the commit.
+    expect(after.campaign.version).toBe(2);
     expect(await db.actionLog.count({ where: { campaignId } })).toBe(1);
     expect(await db.rollLog.count({ where: { campaignId } })).toBe(1);
   });
@@ -70,12 +82,13 @@ describe.skipIf(!url)("campaign service (PostgreSQL)", () => {
     const view = await getCampaignView(db, playerId, campaignId);
     const start = view.state.maps.exterior.player;
     await submitAction(db, offline, playerId, campaignId, { idempotencyKey: key(), action: { type: "move", to: { x: start.x + 1, y: start.y } } }, maxRng);
-    await submitAction(db, offline, playerId, campaignId, { idempotencyKey: key(), action: { type: "talk", npcId: "testemunha", approach: "persuadir", powers: [] } }, maxRng);
+    const talked = await play(offline, playerId, campaignId, { idempotencyKey: key(), action: { type: "talk", npcId: "testemunha", approach: "persuadir", powers: [] } });
     const resumed = await getCampaignView(db, playerId, campaignId);
     expect(resumed.state.clues["pista-testemunho"].discovered).toBe(true);
     expect(resumed.state.npcs.testemunha.talked).toBe(true);
     expect(resumed.narrative.some((n) => n.role === "GM")).toBe(true);
-    expect(resumed.campaign.version).toBe(2);
+    expect(resumed.campaign.version).toBe(2 + talked.clicks);
+    expect(resumed.state.journal.some((j) => j.npcId === "testemunha")).toBe(true);
   });
 
   it("campaign isolation: players cannot read or act on others' campaigns; new campaigns get new state", async () => {
@@ -117,7 +130,7 @@ describe.skipIf(!url)("campaign service (PostgreSQL)", () => {
     (failing as unknown as { fallback: GmProvider }).fallback = broken;
     const view = await getCampaignView(db, playerId, campaignId);
     const clue = view.blueprint.clues.find((c) => c.id === "pista-rastro")!;
-    const res = await submitAction(db, failing, playerId, campaignId, { idempotencyKey: key(), action: { type: "interact", objectId: clue.objectId, verb: "search", powers: [] } }, maxRng);
+    const res = await play(failing, playerId, campaignId, { idempotencyKey: key(), action: { type: "interact", objectId: clue.objectId, verb: "search", powers: [] } });
     expect(res.status).toBe("resolved");
     expect(res.narration).toBeNull();
     const log = await db.actionLog.findUniqueOrThrow({ where: { id: res.actionId } });
@@ -127,7 +140,7 @@ describe.skipIf(!url)("campaign service (PostgreSQL)", () => {
     expect(text).toBeTruthy();
     expect((await db.actionLog.findUniqueOrThrow({ where: { id: res.actionId } })).status).toBe("NARRATED");
     expect(await db.rollLog.count({ where: { campaignId } })).toBe(rollsBefore);
-    expect((await getCampaignView(db, playerId, campaignId)).campaign.version).toBe(1);
+    expect((await getCampaignView(db, playerId, campaignId)).campaign.version).toBe(2);
     // Narrating again is a no-op.
     expect(await narrateAction(db, offline, playerId, campaignId, res.actionId!)).toBe(text);
     expect(await db.narrativeEntry.count({ where: { campaignId, role: "GM", actionId: res.actionId } })).toBe(1);
@@ -140,14 +153,14 @@ describe.skipIf(!url)("campaign service (PostgreSQL)", () => {
     expect(["resolved", "rejected"]).toContain(r1.status);
     const liar: GmProvider = {
       id: "liar",
-      interpret: async () => ({ intent: "interact", objectId: "exterior.nao-existe", verb: "open", skillId: null, npcId: null, approach: null, dt: null, reason: null, optionId: null, weaponId: null, special: null, clarification: null, rulesQuery: null }),
-      narrate: async () => ({ narration: "ok", npcDialogue: [], suggestions: [], effects: [], gmNotes: "", memory: null }),
+      interpret: async () => ({ intent: "interact", category: "physical", objectId: "exterior.nao-existe", areaId: null, verb: "open", skillId: null, npcId: null, approach: null, dt: null, reason: null, stakes: null, optionId: null, weaponId: null, special: null, clarification: null, rulesQuery: null }),
+      narrate: async () => ({ narration: "ok", npcDialogue: [], outcome: "none", effects: [], gmNotes: "" }),
     };
     const before = (await getCampaignView(db, playerId, campaignId)).campaign.version;
     const r2 = await submitAction(db, new GmOrchestrator(liar), playerId, campaignId, { idempotencyKey: key(), text: "abro o portal secreto" }, maxRng);
     expect(r2.status).toBe("rejected");
     expect((await getCampaignView(db, playerId, campaignId)).campaign.version).toBe(before);
-    const badDt: GmProvider = { ...liar, interpret: async () => ({ ...(await liar.interpret({} as never, "")) as object, intent: "skill_check", objectId: null, verb: null, skillId: "atletismo", dt: 13 }) };
+    const badDt: GmProvider = { ...liar, interpret: async () => ({ ...(await liar.interpret({} as never, "")) as object, intent: "skill_check", objectId: null, verb: null, skillId: "atletismo", dt: 13, stakes: "Cair do muro." }) };
     const r3 = await submitAction(db, new GmOrchestrator(badDt), playerId, campaignId, { idempotencyKey: key(), text: "pulo o muro" }, maxRng);
     expect(r3).toMatchObject({ status: "rejected", message: expect.stringContaining("tabela oficial") });
   });

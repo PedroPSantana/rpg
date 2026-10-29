@@ -1,8 +1,8 @@
-import { applyMentalDamage, applyPhysicalDamage, DYING_ROUNDS_TO_DEATH, resolveAttack, rollInitiative, type Attack } from "@/modules/rules/systems/ordem-paranormal/combat";
+import { applyMentalDamage, applyPhysicalDamage, DYING_ROUNDS_TO_DEATH, resolveAttack, rollAttack, rollDamage, rollInitiativeOf, sortInitiative, type Attack } from "@/modules/rules/systems/ordem-paranormal/combat";
 import { parseDice, rollExpression } from "@/modules/rules/core/dice";
 import { SKILL_BY_ID } from "@/modules/rules/systems/ordem-paranormal/data";
 import type { PlayerAction } from "./actions";
-import { ActionRejected, type Resolution } from "./engine";
+import { ActionRejected, healRoll, type Resolution } from "./engine";
 
 /** op-core.combat.initiative + op-core.threat.presenca-perturbadora */
 export function startEncounter(r: Resolution, encounterId: string) {
@@ -12,7 +12,9 @@ export function startEncounter(r: Resolution, encounterId: string) {
   const threatObj = r.defs[enc.mapId].objects.find((o) => o.id === enc.objectId);
   if (threatObj && r.objectState(enc.mapId, enc.objectId) !== "active") r.setObjectState(enc.mapId, enc.objectId, "active");
   r.events.push({ type: "encounter_started", encounterId });
-  r.fact(`Combate! ${threat.name}: ${enc.intro}`);
+  r.fact(enc.intro, "danger");
+  r.fact(`Combate contra ${threat.name}.`, "progress");
+  r.remember("event", `Você enfrentou ${threat.name}: ${threat.description}`);
 
   const firstTime = r.state.threatPv[threat.id] === threat.pv;
   r.state.encounter = {
@@ -28,7 +30,10 @@ export function startEncounter(r: Resolution, encounterId: string) {
 
   if (threat.disturbingPresence && firstTime) {
     const dp = threat.disturbingPresence;
-    const roll = r.check({ skillId: "vontade", dt: dp.dt, label: `Vontade: presença perturbadora de ${threat.name}` });
+    const roll = r.check(
+      { skillId: "vontade", dt: dp.dt, label: `Vontade: presença perturbadora de ${threat.name}` },
+      `Olhar para ${threat.name} agride a mente. Resistir exige Vontade; se falhar, você perde Sanidade (${dp.sanDamage}).`,
+    );
     if (roll.outcome !== "success") {
       const dmg = rollExpression(parseDice(dp.sanDamage), r.rng);
       r.rolls.push({ label: "Dano mental: presença perturbadora", kind: "damage", expression: dp.sanDamage, dice: dmg.dice, modifiers: [], total: dmg.total, outcome: "none", notes: [] });
@@ -38,18 +43,35 @@ export function startEncounter(r: Resolution, encounterId: string) {
   r.state.encounter.presenceResolved = true;
   if (r.state.flags["personagem-caido"]) return;
 
-  const order = rollInitiative(
-    [
-      { id: "pc", name: "Você", agility: r.sheet.attributes.AGI, initiativeBonus: r.sheet.skills.find((s) => s.id === "iniciativa")!.bonus },
-      { id: threat.id, name: threat.name, agility: threat.agility, initiativeBonus: threat.initiativeBonus },
-    ],
-    r.rng,
-  );
-  for (const o of order) r.rolls.push(o.roll);
+  const pc = rollInitiativeOfPlayer(r);
+  const foe = rollInitiativeOf({ id: threat.id, name: threat.name, agility: threat.agility, initiativeBonus: threat.initiativeBonus }, r.rng);
+  const order = sortInitiative([pc, foe]);
+  for (const o of [pc, foe]) r.rolls.push(o.roll);
   r.state.encounter.order = order.map((o) => ({ id: o.entrant.id, kind: o.entrant.id === "pc" ? ("pc" as const) : ("threat" as const), name: o.entrant.name, initiative: o.roll.total }));
-  r.fact(`Iniciativa: ${r.state.encounter.order.map((o) => `${o.name} ${o.initiative}`).join(", ")}.`);
+  r.fact(`Iniciativa: ${r.state.encounter.order.map((o) => `${o.name} ${o.initiative}`).join(", ")}.`, "mechanic");
   if (r.state.encounter.order[0].kind === "threat") threatTurn(r);
   if (r.state.encounter) log(r, `Rodada ${r.state.encounter.round}: sua vez.`);
+}
+
+function rollInitiativeOfPlayer(r: Resolution) {
+  const entrant = { id: "pc", name: "Você", agility: r.sheet.attributes.AGI, initiativeBonus: r.sheet.skills.find((s) => s.id === "iniciativa")!.bonus };
+  const n = entrant.agility;
+  return r.playerRoll(
+    {
+      kind: "initiative",
+      label: "Iniciativa",
+      skillId: "iniciativa",
+      expression: `${n >= 1 ? n : 2 - n}d20 (${n >= 1 ? "maior" : "menor"})`,
+      dice: { count: n >= 1 ? n : 2 - n, sides: 20, keep: n >= 1 ? "highest" : "lowest" },
+      modifiers: entrant.initiativeBonus ? [{ source: "Iniciativa", value: entrant.initiativeBonus }] : [],
+      extraDice: [],
+      target: null,
+      targetLabel: null,
+      peCost: 0,
+      stakes: "Quem age primeiro no confronto.",
+    },
+    (rng) => rollInitiativeOf(entrant, rng),
+  );
 }
 
 type CombatPlayerAction = Extract<PlayerAction, { type: "attack" | "flee" | "first_aid" }>;
@@ -79,29 +101,68 @@ export function combatAction(r: Resolution, a: CombatPlayerAction) {
     const damageModifiers: { source: string; value: number }[] = [];
     if (a.special !== "none") {
       if (!r.sheet.abilities.some((x) => x.id === "ataque-especial")) throw new ActionRejected("Você não possui Ataque Especial.", "op-core.ability.ataque-especial");
-      r.spendPe(2);
+      if (r.char.pe < 2) throw new ActionRejected(`PE insuficientes (precisa de 2, tem ${r.char.pe}).`, "op-core.resources.pe");
       (a.special === "ataque" ? attackModifiers : damageModifiers).push({ source: "Ataque Especial", value: 5 });
     }
     const weak = !!r.state.flags[threat.weakness.flag];
     const defense = threat.defense - (weak ? threat.weakness.defensePenalty : 0);
-    const res = resolveAttack(attack, defense, r.rng, { attackModifiers, damageModifiers, damageResistance: weak && threat.weakness.ignoresResistance ? 0 : threat.damageResistance });
-    r.rolls.push(res.attackRoll);
-    if (res.damageRoll) r.rolls.push(res.damageRoll);
-    if (weak) r.fact(`Explorando a fraqueza: Defesa da criatura ${defense} e sem resistência a dano.`);
-    if (!res.hit) {
-      r.fact(`Ataque com ${profile.name}: ${res.attackRoll.total} contra Defesa ${defense} — errou.`);
-      log(r, `Você erra (${res.attackRoll.total} vs ${defense}).`);
+    const options = { attackModifiers, damageModifiers, damageResistance: weak && threat.weakness.ignoresResistance ? 0 : threat.damageResistance };
+    const n = attack.attackDice;
+    const hitRoll = r.playerRoll(
+      {
+        kind: "test",
+        label: `Ataque: ${profile.name}`,
+        skillId: profile.skill,
+        expression: `${n >= 1 ? n : 2 - n}d20 (${n >= 1 ? "maior" : "menor"})`,
+        dice: { count: n >= 1 ? n : 2 - n, sides: 20, keep: n >= 1 ? "highest" : "lowest" },
+        modifiers: [{ source: "Perícia de ataque", value: attack.attackBonus }, ...attackModifiers].filter((m) => m.value !== 0),
+        extraDice: [],
+        target: defense,
+        targetLabel: "Defesa",
+        peCost: a.special !== "none" ? 2 : 0,
+        stakes: `Acertar ${threat.name} com ${profile.name.toLowerCase()}. Se errar, a criatura age sem ter sofrido nada.`,
+      },
+      (rng) => rollAttack(attack, defense, rng, options),
+    );
+    if (a.special !== "none") r.spendPe(2);
+    r.rolls.push(hitRoll.attackRoll);
+    r.tally(hitRoll.hit ? "success" : "failure");
+    if (weak) r.fact(`Explorando a fraqueza: Defesa da criatura ${defense} e sem resistência a dano.`, "mechanic");
+    if (!hitRoll.hit) {
+      r.fact(`Ataque com ${profile.name}: ${hitRoll.attackRoll.total} contra Defesa ${defense} — errou.`, "mechanic");
+      log(r, `Você erra (${hitRoll.attackRoll.total} vs ${defense}).`);
     } else {
-      enc.threat.pv = Math.max(0, enc.threat.pv - res.damage);
+      const crit = hitRoll.critical;
+      const dmg = r.playerRoll(
+        {
+          kind: "damage",
+          label: `Dano: ${profile.name}`,
+          skillId: null,
+          expression: crit ? `${profile.damage} ×${attack.critMultiplier} (crítico)` : profile.damage,
+          dice: { count: parseDice(attack.damage).terms.reduce((s, t) => s + t.count, 0) * (crit ? attack.critMultiplier : 1), sides: parseDice(attack.damage).terms[0]?.sides ?? 6, keep: "sum" },
+          modifiers: [{ source: "Bônus de dano", value: attack.damageBonus }, ...damageModifiers].filter((m) => m.value !== 0),
+          extraDice: [],
+          target: null,
+          targetLabel: null,
+          peCost: 0,
+          stakes: `${crit ? "Acerto crítico! " : ""}Quanto dano o golpe causa${options.damageResistance ? ` (a criatura ignora ${options.damageResistance})` : ""}.`,
+        },
+        (rng) => rollDamage(attack, crit, rng, options),
+      );
+      r.rolls.push(dmg.damageRoll);
+      enc.threat.pv = Math.max(0, enc.threat.pv - dmg.damage);
       r.state.threatPv[threat.id] = enc.threat.pv;
-      r.fact(`Ataque com ${profile.name}: ${res.attackRoll.total} contra Defesa ${defense} — ${res.critical ? "ACERTO CRÍTICO" : "acertou"}, ${res.damage} de dano (${threat.name}: ${enc.threat.pv}/${enc.threat.pvMax} PV).`);
-      log(r, `Você causa ${res.damage} de dano${res.critical ? " (crítico)" : ""}.`);
+      r.fact(`Ataque com ${profile.name}: ${hitRoll.attackRoll.total} contra Defesa ${defense} — ${crit ? "ACERTO CRÍTICO" : "acertou"}, ${dmg.damage} de dano (${threat.name}: ${enc.threat.pv}/${enc.threat.pvMax} PV).`, "mechanic");
+      log(r, `Você causa ${dmg.damage} de dano${crit ? " (crítico)" : ""}.`);
       if (enc.threat.pv === 0) return victory(r);
     }
   } else if (a.type === "flee") {
-    const roll = r.check({ skillId: a.skillId, dt: threat.fleeDt, label: `Fuga: ${SKILL_BY_ID.get(a.skillId)!.name}` });
+    const roll = r.check(
+      { skillId: a.skillId, dt: threat.fleeDt, label: `Fuga: ${SKILL_BY_ID.get(a.skillId)!.name}` },
+      `Escapar de ${threat.name}. Se falhar, você continua ao alcance dela e ela age.`,
+    );
     if (roll.outcome === "success") return fled(r);
-    r.fact("Você não consegue escapar.");
+    r.fact("Você tenta abrir distância, mas a criatura corta o caminho.");
     log(r, "Tentativa de fuga falhou.");
   } else {
     firstAidInCombat(r);
@@ -120,15 +181,15 @@ function firstAidInCombat(r: Resolution) {
   if (r.char.sceneUses.includes("primeiros-socorros")) throw new ActionRejected("Você já prestou primeiros socorros nesta cena.", "op-core.medicine.first-aid");
   if (r.char.pv >= r.sheet.pvMax) throw new ActionRejected("Você não está ferido.", "op-core.medicine.first-aid");
   r.char.sceneUses.push("primeiros-socorros");
-  const roll = r.check({ skillId: "medicina", dt: 15, label: "Primeiros socorros em combate" });
+  const roll = r.check({ skillId: "medicina", dt: 15, label: "Primeiros socorros em combate" }, "Tratar um ferimento no meio do combate exige Medicina. Seja qual for o resultado, a criatura age em seguida.");
   if (roll.outcome === "success") {
-    const heal = rollExpression(parseDice("1d8"), r.rng);
+    const heal = healRoll(r);
     const before = r.char.pv;
     r.char.pv = Math.min(r.sheet.pvMax, r.char.pv + heal.total);
     r.rolls.push({ label: "Cura: primeiros socorros", kind: "effect", expression: "1d8", dice: heal.dice, modifiers: [], total: heal.total, outcome: "none", notes: [] });
-    r.fact(`Você recupera ${r.char.pv - before} PV.`);
+    r.fact(`Você recupera ${r.char.pv - before} PV.`, "mechanic");
     log(r, `Você se cura em ${r.char.pv - before} PV.`);
-  } else r.fact("Os curativos não seguram.");
+  } else r.fact("As mãos tremem e o curativo não segura.");
 }
 
 /** The threat acts with one of its legal attacks — never anything outside its stat block. */
@@ -148,18 +209,22 @@ export function threatTurn(r: Resolution) {
   r.rolls.push(res.attackRoll);
   if (res.damageRoll) r.rolls.push(res.damageRoll);
   if (!res.hit) {
-    r.fact(`${threat.name} usa ${attack.name}: ${res.attackRoll.total} contra sua Defesa ${r.sheet.defense} — errou.`);
+    r.fact(`${threat.name} usa ${attack.name}: ${res.attackRoll.total} contra sua Defesa ${r.sheet.defense} — errou.`, "mechanic");
+    r.fact(`${threat.name} investe com ${attack.name.toLowerCase()}, mas você consegue sair do caminho.`);
     log(r, `${threat.name} erra.`);
     return;
   }
-  r.fact(`${threat.name} usa ${attack.name}: ${res.attackRoll.total} contra sua Defesa ${r.sheet.defense} — ${res.critical ? "CRÍTICO" : "acertou"}.`);
-  if (attack.damageKind === "mental") sanityDamage(r, res.damage, attack.name);
-  else {
+  r.fact(`${threat.name} usa ${attack.name}: ${res.attackRoll.total} contra sua Defesa ${r.sheet.defense} — ${res.critical ? "CRÍTICO" : "acertou"}.`, "mechanic");
+  if (attack.damageKind === "mental") {
+    r.fact(`${attack.name} atinge sua mente${res.critical ? " em cheio" : ""}.`);
+    sanityDamage(r, res.damage, attack.name);
+  } else {
     const before = r.char.pv;
     const out = applyPhysicalDamage(r.char.pv, res.damage);
     r.char.pv = out.pv;
     r.events.push({ type: "resource", resource: "pv", delta: out.pv - before });
-    r.fact(`Você sofre ${res.damage} de dano (${r.char.pv}/${r.sheet.pvMax} PV).`);
+    r.fact(`${attack.name} acerta você${res.critical ? " com força brutal" : ""}.`);
+    r.fact(`Você sofre ${res.damage} de dano (${r.char.pv}/${r.sheet.pvMax} PV).`, "mechanic");
     log(r, `${threat.name} causa ${res.damage} de dano.`);
     if (out.droppedToZero) dying(r);
   }
@@ -170,11 +235,11 @@ function sanityDamage(r: Resolution, amount: number, source: string) {
   const out = applyMentalDamage(r.char.san, amount, r.sheet.mentalResistance);
   r.char.san = out.san;
   r.events.push({ type: "resource", resource: "san", delta: out.san - before });
-  r.fact(`Dano mental (${source}): −${out.effective} SAN${r.sheet.mentalResistance ? ` (resistência ${r.sheet.mentalResistance})` : ""} (${r.char.san}/${r.sheet.sanMax}).`);
+  r.fact(`Dano mental (${source}): −${out.effective} SAN${r.sheet.mentalResistance ? ` (resistência ${r.sheet.mentalResistance})` : ""} (${r.char.san}/${r.sheet.sanMax}).`, "mechanic");
   if (r.state.encounter) log(r, `Você perde ${out.effective} SAN.`);
   if (out.insane) {
     r.char.conditions.push({ id: "enlouquecendo", source });
-    r.fact("Sua Sanidade chega a 0: você está enlouquecendo.");
+    r.fact("Sua Sanidade chega a 0: você está enlouquecendo.", "danger");
     downed(r);
   }
 }
@@ -183,10 +248,10 @@ function sanityDamage(r: Resolution, amount: number, source: string) {
 function dying(r: Resolution) {
   r.char.conditions.push({ id: "morrendo", source: "0 PV" });
   r.char.dyingRounds = 0;
-  r.fact("Você cai com 0 PV e está morrendo.");
+  r.fact("Você cai com 0 PV e está morrendo.", "danger");
   for (let i = 1; i <= DYING_ROUNDS_TO_DEATH; i++) {
     r.char.dyingRounds = i;
-    r.fact(i < DYING_ROUNDS_TO_DEATH ? `Turno ${i} morrendo: ninguém pode ajudar.` : `Você inicia o ${i}º turno morrendo e não resiste.`);
+    r.fact(i < DYING_ROUNDS_TO_DEATH ? `Turno ${i} morrendo: ninguém pode ajudar.` : `Você inicia o ${i}º turno morrendo e não resiste.`, "mechanic");
   }
   downed(r);
 }
@@ -210,7 +275,9 @@ function victory(r: Resolution) {
   r.state.encounter = null;
   r.state.mode = "exploration";
   r.char.sceneUses = [];
-  r.fact(`${threat.name} foi derrotado.`);
+  r.fact(`${threat.name} se desfaz diante de você. O silêncio que fica é pesado, mas é silêncio.`);
+  r.fact(`${threat.name} foi derrotado.`, "progress");
+  r.remember("event", `Você derrotou ${threat.name}.`);
   if (!r.state.flags["vitima-perdida"]) r.state.flags["vitima-salva"] = true;
 }
 
@@ -224,7 +291,8 @@ function fled(r: Resolution) {
   const map = r.defs[r.state.currentMapId];
   r.state.maps[map.id].player = map.spawns.exit ?? map.spawns.start;
   r.mapEvents.push({ type: "move_player", mapId: map.id, to: r.state.maps[map.id].player });
-  r.fact("Você escapa por enquanto. A criatura continua lá, ferida ou não.");
+  r.fact("Você corre sem olhar para trás até a entrada. A criatura continua lá dentro, ferida ou não.");
+  r.remember("event", "Você fugiu do confronto.");
   r.state.flags["ameaca-cacando"] = false;
   r.addUrgency(2, "a criatura agora sabe de você");
   r.state.flags["ameaca-cacando"] = false;

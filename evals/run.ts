@@ -62,7 +62,7 @@ function metric(id: string, label: string, value: number, target: number, unit: 
   const sheet = deriveSheet(build);
   const charState = initialState(build, sheet);
   const state = initialCampaignState(blueprint);
-  const input = { blueprint, state, sheet, character: { ...charState, name: build.name, concept: build.concept }, history: [], memories: [] };
+  const input = { blueprint, state, sheet, character: { ...charState, name: build.name, concept: build.concept }, history: [] };
   const ext = blueprint.maps[0];
   const npc = blueprint.npcs.find((n) => n.mapId === ext.id)!;
   const clueObj = ext.objects.find((o) => o.kind === "clue")!;
@@ -138,9 +138,9 @@ function metric(id: string, label: string, value: number, target: number, unit: 
   // Orchestrator: malformed provider output never reaches the engine.
   const junk: GmProvider = { id: "junk", interpret: async () => ({ intent: "teleport", objectId: 42 }), narrate: async () => ({ narration: 123 }) };
   const orch = new GmOrchestrator(junk, { retries: 1, timeoutMs: 1000 });
-  const gmInput = { blueprint, state: ctx.state, sheet, character: { ...ctx.character.state, name: "x", concept: "" }, history: [], memories: [] };
+  const gmInput = { blueprint, state: ctx.state, sheet, character: { ...ctx.character.state, name: "x", concept: "" }, history: [] };
   const interp = await orch.interpret(gmInput, "examino o chão");
-  const narr = await orch.narrate({ input: gmInput, outcome: { facts: ["Fato."], suggestions: [], rolls: [] } });
+  const narr = await orch.narrate({ input: gmInput, outcome: { facts: ["Fato."], rolls: [] } });
   metric("validation.malformed-ai", "Respostas malformadas da IA substituídas pelo modo seguro", interp.provider.includes("fallback") && narr.degraded ? 1 : 0, 1, "%", "min");
 
   // Out-of-catalog rules questions: the GM must say it does not know.

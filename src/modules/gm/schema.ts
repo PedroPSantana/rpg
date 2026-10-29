@@ -5,11 +5,16 @@ import { z } from "zod";
  * Everything the model returns is parsed with these schemas and then
  * validated again by the rules/campaign engine before anything is committed.
  */
-export const INTENTS = ["interact", "talk", "skill_check", "decide", "attack", "flee", "first_aid", "abandon", "narrative", "clarify"] as const;
+export const INTENTS = ["observe", "go", "interact", "talk", "skill_check", "decide", "attack", "flee", "first_aid", "abandon", "narrative", "clarify"] as const;
+
+/** What kind of thing the player said; used to shape the reply, never to pick a mechanic on its own. */
+export const UTTERANCES = ["dialogue", "question", "observation", "investigation", "social", "stealth", "movement", "physical", "attack", "supernatural", "meta"] as const;
 
 export const InterpretationSchema = z.object({
   intent: z.enum(INTENTS),
+  category: z.enum(UTTERANCES).nullable(),
   objectId: z.string().nullable(),
+  areaId: z.string().nullable(),
   verb: z.enum(["inspect", "search", "open", "close", "unlock", "force", "take", "use", "talk", "enter"]).nullable(),
   skillId: z.string().nullable(),
   npcId: z.string().nullable(),
@@ -17,6 +22,8 @@ export const InterpretationSchema = z.object({
   /** Only for improvised skill checks; must be a DT from the official table. */
   dt: z.number().int().nullable(),
   reason: z.string().nullable(),
+  /** Improvised checks only: why failure matters. A check without stakes is refused. */
+  stakes: z.string().nullable(),
   optionId: z.string().nullable(),
   weaponId: z.string().nullable(),
   special: z.enum(["none", "ataque", "dano"]).nullable(),
@@ -33,13 +40,11 @@ export const NarrationSchema = z.object({
   /** Player-facing narration in pt-BR. Must not contradict the facts. */
   narration: z.string().min(1).max(4000),
   npcDialogue: z.array(z.object({ npcId: z.string(), line: z.string().max(800) })).max(4),
-  /** Optional suggestions — never restrictions. */
-  suggestions: z.array(z.string().max(160)).max(4),
+  /** The result the narration describes; must match the engine's verdict. */
+  outcome: z.enum(["success", "failure", "mixed", "none"]),
   /** Purely cosmetic scene effects, validated against a whitelist. */
   effects: z.array(z.enum(COSMETIC_EFFECTS)).max(3),
   /** Hidden GM planning; stored, never shown to the player. */
   gmNotes: z.string().max(1500),
-  /** Optional one-line memory for continuity (non-authoritative). */
-  memory: z.string().max(300).nullable(),
 });
 export type Narration = z.infer<typeof NarrationSchema>;

@@ -12,7 +12,7 @@ function gmInput(mode: "exploration" | "combat" = "exploration") {
   const sheet = deriveSheet(combatentePolicial);
   const state = initialCampaignState(blueprint);
   state.mode = mode;
-  return { blueprint, state, sheet, character: { ...initialState(combatentePolicial, sheet), name: "Lia", concept: "" }, history: [], memories: [] };
+  return { blueprint, state, sheet, character: { ...initialState(combatentePolicial, sheet), name: "Lia", concept: "" }, history: [] };
 }
 
 describe("offline interpreter", () => {
@@ -36,7 +36,7 @@ describe("offline interpreter", () => {
   it("does not duplicate an NPC's deflection in narration and dialogue", () => {
     const input = gmInput();
     const npc = input.blueprint.npcs[0];
-    const n = narrateOffline({ input, outcome: { facts: [`${npc.name} não coopera: "${npc.deflection}"`], suggestions: [], rolls: [] } });
+    const n = narrateOffline({ input, outcome: { facts: [`${npc.name} não coopera: "${npc.deflection}"`], rolls: [] } });
     expect(n.npcDialogue).toEqual([]);
     expect(n.narration).toContain(npc.deflection);
   });
@@ -55,14 +55,14 @@ describe("GM orchestrator", () => {
     const junk: GmProvider = { id: "junk", interpret: async () => ({ intent: "teleport" }), narrate: async () => ({ narration: 1 }) };
     const orch = new GmOrchestrator(junk, { retries: 1, timeoutMs: 500 });
     expect((await orch.interpret(input, "examino o chão")).provider).toContain("fallback");
-    expect(await orch.narrate({ input, outcome: { facts: ["Fato."], suggestions: [], rolls: [] } })).toMatchObject({ degraded: true, provider: "offline" });
+    expect(await orch.narrate({ input, outcome: { facts: ["Fato."], rolls: [] } })).toMatchObject({ degraded: true, provider: "offline" });
   });
 
   it("narrates routine movement without calling the AI provider", async () => {
     const input = gmInput();
     let calls = 0;
     const counting: GmProvider = { id: "count", interpret: async () => ({}), narrate: async () => (calls++, {}) };
-    await new GmOrchestrator(counting).narrate({ input, outcome: { facts: [], suggestions: [], rolls: [] }, routine: true });
+    await new GmOrchestrator(counting).narrate({ input, outcome: { facts: [], rolls: [] }, routine: true });
     expect(calls).toBe(0);
   });
 });
