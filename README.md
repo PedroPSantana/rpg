@@ -16,6 +16,14 @@ Princípios do projeto:
 - Node.js 22+ e pnpm 10 (`corepack enable`)
 - PostgreSQL 14+ com a extensão `unaccent` disponível (vem no pacote `postgresql-contrib`)
 
+## Jogar sem instalar nada (GitHub Codespaces)
+
+1. Na página do repositório, clique em **Code → Codespaces → Create codespace on main**.
+2. Espere a preparação (instala dependências, cria o banco e o catálogo de regras).
+3. O jogo é compilado e iniciado no terminal; clique em **Open in Browser** no aviso da porta 3000.
+
+A configuração fica em `.devcontainer/` e também funciona com a extensão Dev Containers do VS Code.
+
 ## Rodando localmente
 
 ```bash

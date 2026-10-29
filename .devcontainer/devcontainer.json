@@ -1,0 +1,17 @@
+{
+  // GitHub Codespaces / Dev Containers: opens a ready-to-play environment.
+  // Postgres runs alongside; the game builds and starts when the terminal attaches.
+  "name": "Mestre das Sombras",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Jogo", "onAutoForward": "openBrowser" }
+  },
+  "postCreateCommand": "npm install -g pnpm@10.28.0 && pnpm install && pnpm db:migrate && pnpm db:seed",
+  "postAttachCommand": "pnpm build && pnpm start",
+  "customizations": {
+    "codespaces": { "openFiles": ["README.md"] }
+  }
+}
