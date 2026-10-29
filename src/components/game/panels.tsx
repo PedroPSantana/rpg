@@ -2,6 +2,7 @@
 
 import { Badge, Button, Meter } from "@/components/ui";
 import { SKILL_BY_ID } from "@/modules/rules/systems/ordem-paranormal/data";
+import { Portrait } from "../scene/portrait";
 import type { RollDetail, View } from "./types";
 
 const OUTCOME = {
@@ -13,8 +14,9 @@ const OUTCOME = {
 
 export function JournalPanel({ view }: { view: View }) {
   const { blueprint: bp, state } = view;
-  const found = bp.clues.filter((c) => state.clues[c.id]?.discovered);
-  const metNpcs = bp.npcs.filter((n) => state.npcs[n.id]?.talked);
+  const facts = state.journal.filter((j) => j.kind === "fact");
+  const statements = state.journal.filter((j) => j.kind === "statement");
+  const events = state.journal.filter((j) => j.kind === "event").slice(-8).reverse();
   return (
     <div className="space-y-6 text-sm">
       <section>
@@ -26,7 +28,7 @@ export function JournalPanel({ view }: { view: View }) {
         </p>
       </section>
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">Missões</h3>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">Objetivos</h3>
         <ul className="space-y-3">
           {bp.quests.map((q) => {
             const qs = state.quests[q.id];
@@ -51,19 +53,30 @@ export function JournalPanel({ view }: { view: View }) {
         </ul>
       </section>
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">
-          Pistas ({found.length}/{bp.clues.length})
-        </h3>
-        {found.length === 0 && <p className="text-dim">Nenhuma pista ainda. Examine o ambiente e converse com as pessoas.</p>}
-        <ul className="space-y-2">
-          {found.map((c) => (
-            <li key={c.id} className="rounded-md border border-line bg-ink/50 p-2">
-              <p className="font-medium text-gold">{c.title}</p>
-              <p className="text-xs text-ash">{c.description}</p>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">O que você sabe</h3>
+        {facts.length === 0 && <p className="text-dim">Nada confirmado ainda.</p>}
+        <ul className="space-y-1.5">
+          {facts.map((f, i) => (
+            <li key={i} className="border-l-2 border-gold/40 pl-2 text-bone">
+              {f.text}
+              {f.source && <span className="block text-[11px] text-dim">{f.source}</span>}
             </li>
           ))}
         </ul>
       </section>
+      {statements.length > 0 && (
+        <section>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">O que disseram</h3>
+          <ul className="space-y-1.5">
+            {statements.map((f, i) => (
+              <li key={i} className="border-l-2 border-sanity/40 pl-2 text-ash">
+                {f.text}
+                <span className="block text-[11px] text-dim">Depoimento{f.source ? ` de ${f.source}` : ""}, não confirmado</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <section>
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">Hipóteses</h3>
         <ul className="space-y-1.5">
@@ -74,20 +87,60 @@ export function JournalPanel({ view }: { view: View }) {
             </li>
           ))}
         </ul>
+        <p className="mt-1 text-[11px] text-dim">Hipóteses não são fatos: só as pistas confirmam algo.</p>
       </section>
-      {metNpcs.length > 0 && (
+      {events.length > 0 && (
         <section>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">Pessoas</h3>
-          <ul className="space-y-1">
-            {metNpcs.map((n) => (
-              <li key={n.id}>
-                <span className="text-bone">{n.name}</span> <span className="text-dim">— {n.role}</span>
-              </li>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">Acontecimentos recentes</h3>
+          <ul className="space-y-1 text-xs text-ash">
+            {events.map((e, i) => (
+              <li key={i}>· {e.text}</li>
             ))}
           </ul>
         </section>
       )}
       <p className="text-[11px] text-dim">O relógio de urgência é um procedimento original deste projeto, não uma regra oficial.</p>
+    </div>
+  );
+}
+
+export function CluesPanel({ view }: { view: View }) {
+  const { blueprint: bp, state } = view;
+  const found = bp.clues.filter((c) => state.clues[c.id]?.discovered);
+  const met = bp.npcs.filter((n) => state.npcs[n.id]?.talked);
+  return (
+    <div className="space-y-6 text-sm">
+      <section>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">
+          Pistas ({found.length}/{bp.clues.length})
+        </h3>
+        {found.length === 0 && <p className="text-dim">Nenhuma pista ainda.</p>}
+        <ul className="space-y-2">
+          {found.map((c) => (
+            <li key={c.id} className="rounded-md border border-line bg-ink/50 p-2.5">
+              <p className="font-medium text-gold">{c.title}</p>
+              <p className="text-xs text-ash">{c.description}</p>
+              {c.discoveredBy && <p className="mt-1 text-[11px] text-dim">Obtida por: {c.discoveredBy}</p>}
+            </li>
+          ))}
+        </ul>
+      </section>
+      {met.length > 0 && (
+        <section>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ash">Pessoas</h3>
+          <ul className="space-y-2">
+            {met.map((n) => (
+              <li key={n.id} className="flex items-center gap-3">
+                <Portrait name={n.name} role={n.role} size={36} />
+                <span>
+                  <span className="block text-bone">{n.name}</span>
+                  <span className="block text-xs text-dim">{n.role}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

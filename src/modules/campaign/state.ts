@@ -1,8 +1,25 @@
 import { z } from "zod";
 import type { ConditionContext } from "@/modules/adventures/conditions";
 import type { AdventureBlueprint } from "@/modules/adventures/schema";
+import { areaAt, areaKey } from "@/modules/world/areas";
 import { initialMapState } from "@/modules/world/events";
 import { MapStateSchema } from "@/modules/world/schema";
+import { PendingRollSchema } from "./dice";
+
+/**
+ * Established knowledge, written only by the engine. The GM reads it as the
+ * campaign's ground truth; nothing the AI writes in prose ends up here.
+ */
+export const JournalEntrySchema = z.object({
+  kind: z.enum(["fact", "statement", "event"]),
+  text: z.string(),
+  /** Who or what established it (an NPC name, a skill, "observação"). */
+  source: z.string().nullable(),
+  npcId: z.string().nullable().default(null),
+  /** Action counter when it was established. */
+  at: z.number().int(),
+});
+export type JournalEntry = z.infer<typeof JournalEntrySchema>;
 
 export const EncounterStateSchema = z.object({
   id: z.string(),
@@ -42,12 +59,19 @@ export const CampaignStateSchema = z.object({
   rewardsGranted: z.boolean(),
   scene: z.number().int(),
   actionCount: z.number().int(),
+  /** Areas the agent has already entered ("mapId:areaId"). Added after v1 launched; defaults keep old saves valid. */
+  areasVisited: z.array(z.string()).default([]),
+  journal: z.array(JournalEntrySchema).default([]),
+  /** An action waiting for the player to roll. Owned by the campaign service, never by the engine. */
+  pending: PendingRollSchema.nullable().default(null),
 });
 export type CampaignState = z.infer<typeof CampaignStateSchema>;
 
 export function initialCampaignState(bp: AdventureBlueprint): CampaignState {
   const maps = Object.fromEntries(bp.maps.map((m) => [m.id, initialMapState(m, m.id === bp.startMapId ? "start" : "exit")]));
   maps[bp.startMapId].visited = true;
+  const start = bp.maps.find((m) => m.id === bp.startMapId)!;
+  const startArea = areaAt(start, maps[bp.startMapId].player);
   return {
     schemaVersion: 1,
     mode: "exploration",
@@ -67,6 +91,9 @@ export function initialCampaignState(bp: AdventureBlueprint): CampaignState {
     rewardsGranted: false,
     scene: 1,
     actionCount: 0,
+    areasVisited: startArea ? [areaKey(start.id, startArea.id)] : [],
+    journal: [],
+    pending: null,
   };
 }
 

@@ -58,7 +58,7 @@ describe("investigation", () => {
     const { ctx: next, out } = step(ctx, { type: "interact", objectId: clue.objectId, verb: "search", powers: [] });
     expect(next.state.clues["pista-rastro"].discovered).toBe(false);
     expect(next.state.urgency).toBe(1);
-    expect(out.suggestions.join(" ")).toMatch(/outra abordagem/);
+    expect(out.suggestions.join(" ")).toMatch(/outra abordagem/i);
     // Retry is allowed (with consequences).
     expect(resolveAction(next, { type: "interact", objectId: clue.objectId, verb: "search", powers: [] }).ok).toBe(true);
   });
@@ -101,7 +101,7 @@ describe("NPC dialogue", () => {
     const seed = findSeed((bp) => bp.npcs.find((n) => n.id === "morador")!.isCulprit);
     let ctx = enterInterior(makeContext({ seed }));
     const fail = step(ctx, { type: "talk", npcId: "morador", approach: "conversar", powers: [] });
-    expect(fail.out.facts.join(" ")).toMatch(/não coopera/);
+    expect(fail.out.beats.some((b) => b.kind === "dialogue" && b.npcId === "morador")).toBe(true);
     ctx = step(fail.ctx, { type: "talk", npcId: "morador", approach: "intuir", powers: [] }).ctx;
     expect(ctx.state.flags["culpado-exposto"]).toBe(true);
     ctx = step(ctx, { type: "talk", npcId: "morador", approach: "intimidar", powers: [] }).ctx;

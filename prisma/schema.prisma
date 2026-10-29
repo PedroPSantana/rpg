@@ -73,6 +73,8 @@ model Character {
 }
 
 enum ActionStatus {
+  /// Waiting for the player to roll (see CampaignState.pending).
+  PENDING
   RESOLVED
   NARRATED
   REJECTED

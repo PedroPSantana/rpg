@@ -5,8 +5,10 @@ import type { Interpretation, Narration } from "./schema";
 export interface NarrateRequest {
   input: GmContextInput;
   /** Authoritative outcome (null for scene openings). */
-  outcome: Pick<ActionOutcome, "facts" | "suggestions" | "rolls"> | null;
+  outcome: Pick<ActionOutcome, "facts" | "rolls"> & Partial<Pick<ActionOutcome, "beats" | "verdict" | "events">>;
   playerText?: string;
+  /** Engine action type, so the narrator knows whether the agent spoke, looked or acted. */
+  actionType?: string;
   /** Routine movement: narrated deterministically, never sent to the AI provider. */
   routine?: boolean;
 }

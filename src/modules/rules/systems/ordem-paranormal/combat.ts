@@ -27,17 +27,10 @@ export interface AttackResolution {
   damage: number;
 }
 
-/**
- * op-core.combat.attack — attack test (Luta/Pontaria) against the target's
- * Defesa; a hit whose kept d20 is within the threat range is critical and
- * multiplies the weapon dice (not fixed bonuses). op-core.combat.critical
- */
-export function resolveAttack(
-  attack: Attack,
-  targetDefense: number,
-  rng: RandomSource,
-  options: { attackModifiers?: { source: string; value: number }[]; damageModifiers?: { source: string; value: number }[]; diceModifier?: number; damageResistance?: number } = {},
-): AttackResolution {
+type AttackOptions = { attackModifiers?: { source: string; value: number }[]; damageModifiers?: { source: string; value: number }[]; diceModifier?: number; damageResistance?: number };
+
+/** op-core.combat.attack — the attack test alone (Luta/Pontaria against Defesa). */
+export function rollAttack(attack: Attack, targetDefense: number, rng: RandomSource, options: AttackOptions = {}) {
   const attackRoll = rollTest(
     {
       label: `Ataque: ${attack.name}`,
@@ -51,8 +44,11 @@ export function resolveAttack(
   const hit = attackRoll.total >= targetDefense;
   const critical = hit && attackRoll.natural >= attack.critThreshold;
   if (critical) attackRoll.outcome = "critical";
-  if (!hit) return { attackRoll, hit, critical: false, damage: 0 };
+  return { attackRoll, hit, critical };
+}
 
+/** op-core.combat.damage / op-core.combat.critical — weapon dice (multiplied on a critical) plus fixed bonuses, minus resistance. */
+export function rollDamage(attack: Attack, critical: boolean, rng: RandomSource, options: AttackOptions = {}) {
   const expr = parseDice(attack.damage);
   const mult = critical ? attack.critMultiplier : 1;
   const rolled = rollExpression(expr, rng, { multiplyDice: mult });
@@ -73,6 +69,18 @@ export function resolveAttack(
     outcome: "none",
     notes,
   };
+  return { damageRoll, damage };
+}
+
+/**
+ * op-core.combat.attack — attack test (Luta/Pontaria) against the target's
+ * Defesa; a hit whose kept d20 is within the threat range is critical and
+ * multiplies the weapon dice (not fixed bonuses). op-core.combat.critical
+ */
+export function resolveAttack(attack: Attack, targetDefense: number, rng: RandomSource, options: AttackOptions = {}): AttackResolution {
+  const { attackRoll, hit, critical } = rollAttack(attack, targetDefense, rng, options);
+  if (!hit) return { attackRoll, hit, critical: false, damage: 0 };
+  const { damageRoll, damage } = rollDamage(attack, critical, rng, options);
   return { attackRoll, hit, critical, damageRoll, damage };
 }
 
@@ -83,14 +91,18 @@ export interface InitiativeEntrant {
   initiativeBonus: number;
 }
 
-/** op-core.combat.initiative — Iniciativa test; ties broken by higher AGI, then id for determinism. */
+export function rollInitiativeOf(e: InitiativeEntrant, rng: RandomSource) {
+  return { entrant: e, roll: rollTest({ label: `Iniciativa: ${e.name}`, attribute: e.agility, modifiers: [{ source: "Iniciativa", value: e.initiativeBonus }], kind: "initiative" }, rng) };
+}
+
+/** Ties broken by higher AGI, then id for determinism. */
+export function sortInitiative<T extends ReturnType<typeof rollInitiativeOf>>(rolls: T[]): T[] {
+  return [...rolls].sort((a, b) => b.roll.total - a.roll.total || b.entrant.agility - a.entrant.agility || a.entrant.id.localeCompare(b.entrant.id));
+}
+
+/** op-core.combat.initiative — Iniciativa test for every entrant, in order. */
 export function rollInitiative(entrants: InitiativeEntrant[], rng: RandomSource) {
-  const rolls = entrants.map((e) => ({
-    entrant: e,
-    roll: rollTest({ label: `Iniciativa: ${e.name}`, attribute: e.agility, modifiers: [{ source: "Iniciativa", value: e.initiativeBonus }], kind: "initiative" }, rng),
-  }));
-  rolls.sort((a, b) => b.roll.total - a.roll.total || b.entrant.agility - a.entrant.agility || a.entrant.id.localeCompare(b.entrant.id));
-  return rolls;
+  return sortInitiative(entrants.map((e) => rollInitiativeOf(e, rng)));
 }
 
 /**

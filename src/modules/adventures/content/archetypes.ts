@@ -17,7 +17,7 @@ export const ARCHETYPES: Archetype[] = [
     premise: (v) =>
       `${v.victim}, tradutora aposentada, sumiu há quatro dias. Os vizinhos juram que ainda ouvem a voz dela lendo em voz alta, de madrugada, ${placeIn(v)}. As paredes dos cômodos começaram a amanhecer cobertas de uma caligrafia que ninguém reconhece.`,
     hook: (v) =>
-      `Uma ligação anônima à Ordo Realitas repetiu, por três minutos, a mesma frase em uma língua inexistente. A ligação vinha de ${placeThe(v)}, em ${v.city}. Você chega pouco depois da meia-noite.`,
+      `Uma ligação anônima à Ordo Realitas repetiu, por três minutos, a mesma frase em uma língua inexistente. A ligação vinha ${placeOf(v)}, em ${v.city}. Você chega pouco depois da meia-noite.`,
     antagonist: () => ({ name: "o Sussurrante", nature: "Uma criatura de Conhecimento formada por palavras que foram lidas tantas vezes que aprenderam a ler de volta.", motive: "Quer ser lida até a última página e, para isso, precisa de novos leitores." }),
     threat: {
       name: "Sussurrante",
