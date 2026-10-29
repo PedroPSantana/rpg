@@ -158,7 +158,24 @@ model RuleSource {
   authorized   Boolean
   notes        String
   verifiedAt   DateTime?
+  url          String?
   rules        RuleRecord[]
+  chunks       SourceChunk[]
+}
+
+/// Text ingested from an authorized document. Retrieval only — never treated as verified rules.
+model SourceChunk {
+  id          String     @id @default(cuid())
+  sourceId    String
+  source      RuleSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  ordinal     Int
+  headingPath String[]
+  page        Int?
+  content     String
+  flags       String[]
+  createdAt   DateTime   @default(now())
+
+  @@unique([sourceId, ordinal])
 }
 
 model RuleRecord {
@@ -178,8 +195,10 @@ model RuleRecord {
   sourceLocator        String
   verificationStatus   String
   implementationStatus String
+  implementedIn        String[]
   testRefs             String[]
   limitations          String
+  conflictNotes        String?
   updatedAt            DateTime   @updatedAt
 
   @@index([systemId, editionId, category])
